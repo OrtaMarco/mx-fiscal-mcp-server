@@ -13,7 +13,7 @@ import { registerIdentifierTools } from "./tools/identifiers.js";
 import { registerCfdiTools } from "./tools/cfdi.js";
 import { registerCatalogTools } from "./tools/catalogs.js";
 
-const INSTRUCTIONS = `Mexican tax and banking toolkit. Every tool is read-only and needs no API key, no CSD certificate and no PAC contract. Eight of the nine are pure computation over bundled catalogues and never touch the network; only \`cfdi_status\` leaves the process, and it talks to exactly one hardcoded host — the SAT's public status service.
+const INSTRUCTIONS = `Mexican tax and banking toolkit. Every tool is read-only and needs no API key, no CSD certificate and no PAC contract. Seven of the eight are pure computation over bundled catalogues and never touch the network; only \`cfdi_status\` leaves the process, and it talks to exactly one hardcoded host — the SAT's public status service.
 
 Guidance:
 - Identifier questions: \`validate_rfc\`, \`validate_curp\`, \`validate_clabe\`, \`validate_nss\`. Each returns the normalised value, the parsed fields and a legible reason for every failure.
