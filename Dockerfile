@@ -1,20 +1,12 @@
 # mx-fiscal-mcp-server — HTTP transport image.
 #
-# ⚠️ TEMPORARY: `mx-identifiers` is declared as `file:../mx-identifiers` until
-# 1.0.0 lands on npm, and a `file:` path outside the build context cannot be
-# resolved by `npm ci`. Until then, build with the PARENT directory as context
-# so both repos are visible:
-#
-#   docker build -f mx-fiscal-mcp-server/Dockerfile.local -t mx-fiscal-mcp ..
-#
-# Once the dependency reads `"mx-identifiers": "^1.0.0"`, this file works as-is
-# from the repo root:  docker build -t mx-fiscal-mcp .
+#   docker build -t mx-fiscal-mcp .
 
 # Build stage
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build

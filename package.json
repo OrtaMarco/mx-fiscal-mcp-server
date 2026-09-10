@@ -60,7 +60,7 @@
     "@modelcontextprotocol/server": "^2.0.0",
     "@xmldom/xmldom": "^0.9.8",
     "express": "^4.21.2",
-    "mx-identifiers": "file:../mx-identifiers",
+    "mx-identifiers": "^1.0.0",
     "zod": "^4.2.0"
   },
   "devDependencies": {
@@ -69,6 +69,5 @@
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
-  },
-  "//": "mx-identifiers viaja como 'file:../mx-identifiers' solo mientras el paquete no este publicado. En cuanto 1.0.0 este en npm, cambiar esa linea por \"mx-identifiers\": \"^1.0.0\" y volver a correr npm install."
+  }
 }

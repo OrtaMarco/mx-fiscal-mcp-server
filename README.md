@@ -134,12 +134,6 @@ npm install
 npm run build
 ```
 
-> **Interim dependency note.** `mx-identifiers` is declared as
-> `"mx-identifiers": "file:../mx-identifiers"` because 1.0.0 is not on npm yet. Clone
-> [`OrtaMarco/mx-identifiers`](https://github.com/OrtaMarco/mx-identifiers) as a sibling
-> directory and run `npm run build` in it first. **Once it is published, change that
-> line to `"mx-identifiers": "^1.0.0"`** and the sibling clone stops being needed.
-
 ## Use it with Claude Code
 
 ```bash
@@ -194,9 +188,6 @@ Or with Docker:
 docker build -t mx-fiscal-mcp .
 docker run -p 3000:3000 -e TRANSPORT=http mx-fiscal-mcp
 ```
-
-(Until `mx-identifiers` is on npm, use `Dockerfile.local` from the parent directory —
-the header of that file has the exact command.)
 
 Set `ALLOWED_ORIGINS=https://your.app` to enable Origin-based DNS-rebinding protection
 (leave empty when a trusted proxy already restricts access).
