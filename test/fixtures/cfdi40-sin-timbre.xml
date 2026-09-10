@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CFDI 4.0 de muestra SIN TIMBRAR (una prefactura, o un XML al que le quitaron el
+  complemento). Va a propósito con el espacio de nombres por defecto y SIN el
+  prefijo `cfdi:`, para fijar que el lector recorre por localName y no por prefijo.
+  Además el total NO cuadra a propósito: 500.00 − 0 + 80.00 = 580.00, pero declara
+  590.00, para ejercitar la comprobación aritmética.
+-->
+<Comprobante
+    xmlns="http://www.sat.gob.mx/cfd/4"
+    Version="4.0"
+    Serie="B"
+    Folio="7"
+    Fecha="2026-03-11T10:00:00"
+    FormaPago="99"
+    SubTotal="500.00"
+    Descuento="0.00"
+    Moneda="MXN"
+    Total="590.00"
+    TipoDeComprobante="I"
+    Exportacion="01"
+    MetodoPago="PPD"
+    LugarExpedicion="64000">
+  <Emisor Rfc="TES150312DX2" Nombre="TORTILLERIA LA ESPERANZA" RegimenFiscal="601"/>
+  <Receptor Rfc="XAXX010101000" Nombre="PUBLICO EN GENERAL" DomicilioFiscalReceptor="64000" RegimenFiscalReceptor="616" UsoCFDI="S01"/>
+  <Conceptos>
+    <Concepto ClaveProdServ="50221302" Cantidad="10" ClaveUnidad="KGM" Unidad="Kilogramo" Descripcion="Tortilla de maiz" ValorUnitario="50.00" Importe="500.00" Descuento="0.00" ObjetoImp="02">
+      <Impuestos>
+        <Traslados>
+          <Traslado Base="500.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="80.00"/>
+        </Traslados>
+      </Impuestos>
+    </Concepto>
+  </Conceptos>
+  <Impuestos TotalImpuestosTrasladados="80.00">
+    <Traslados>
+      <Traslado Base="500.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="80.00"/>
+    </Traslados>
+  </Impuestos>
+</Comprobante>
