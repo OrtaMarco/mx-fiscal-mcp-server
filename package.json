@@ -1,0 +1,74 @@
+{
+  "name": "mx-fiscal-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for Mexican tax and banking data — validate RFC, CURP, CLABE and NSS, read CFDI 4.0 invoices, query the SAT status service and look up SAT catalogues. Read-only, no API keys required.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mx-fiscal-mcp-server": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "prepare": "npm run build",
+    "start": "node dist/index.js",
+    "start:http": "TRANSPORT=http node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "pretest": "npm run build",
+    "test": "node --test scripts/units.test.mjs",
+    "smoke": "node scripts/smoke-all.mjs",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mexico",
+    "mexican",
+    "sat",
+    "cfdi",
+    "rfc",
+    "curp",
+    "clabe",
+    "nss",
+    "imss",
+    "banxico",
+    "factura",
+    "facturacion-electronica",
+    "test-data"
+  ],
+  "author": "Marco Orta <contacto@ortamarco.me> (https://ortamarco.me)",
+  "license": "MIT",
+  "homepage": "https://github.com/OrtaMarco/mx-fiscal-mcp-server#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OrtaMarco/mx-fiscal-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/OrtaMarco/mx-fiscal-mcp-server/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@xmldom/xmldom": "^0.9.8",
+    "express": "^4.21.2",
+    "mx-identifiers": "file:../mx-identifiers",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "//": "mx-identifiers viaja como 'file:../mx-identifiers' solo mientras el paquete no este publicado. En cuanto 1.0.0 este en npm, cambiar esa linea por \"mx-identifiers\": \"^1.0.0\" y volver a correr npm install."
+}

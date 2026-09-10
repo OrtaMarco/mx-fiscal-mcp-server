@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mx-fiscal": {
+      "command": "node",
+      "args": ["/absolute/path/to/mx-fiscal-mcp-server/dist/index.js"]
+    }
+  }
+}
