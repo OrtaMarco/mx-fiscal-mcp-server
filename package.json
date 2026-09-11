@@ -1,6 +1,6 @@
 {
   "name": "mx-fiscal-mcp-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP server for Mexican tax and banking data — validate RFC, CURP, CLABE and NSS, read CFDI 4.0 invoices, query the SAT status service and look up SAT catalogues. Read-only, no API keys required.",
   "mcpName": "io.github.OrtaMarco/mx-fiscal-mcp-server",
   "type": "module",
