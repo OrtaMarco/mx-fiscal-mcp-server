@@ -2,6 +2,7 @@
 
 > An [MCP](https://modelcontextprotocol.io) server that gives an AI agent **Mexican tax and banking** capabilities — validate RFC, CURP, CLABE and NSS with real check digits, read a CFDI 4.0 invoice, ask the SAT whether it is still live, and look up the SAT's code tables. **No API keys, no CSD certificate, no PAC contract.**
 
+[![ci](https://github.com/OrtaMarco/mx-fiscal-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/OrtaMarco/mx-fiscal-mcp-server/actions/workflows/ci.yml)
 [![MCP](https://img.shields.io/badge/MCP-2026--07--28-blue)](https://modelcontextprotocol.io)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
