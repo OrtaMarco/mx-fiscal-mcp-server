@@ -2,8 +2,8 @@
   "name": "mx-fiscal-mcp-server",
   "version": "1.0.0",
   "description": "MCP server for Mexican tax and banking data — validate RFC, CURP, CLABE and NSS, read CFDI 4.0 invoices, query the SAT status service and look up SAT catalogues. Read-only, no API keys required.",
+  "mcpName": "io.github.OrtaMarco/mx-fiscal-mcp-server",
   "type": "module",
-  "main": "dist/index.js",
   "bin": {
     "mx-fiscal-mcp-server": "dist/index.js"
   },
@@ -13,9 +13,10 @@
     "LICENSE"
   ],
   "scripts": {
+    "prebuild": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
-    "prepare": "npm run build",
     "start": "node dist/index.js",
     "start:http": "TRANSPORT=http node dist/index.js",
     "dev": "tsx watch src/index.ts",
@@ -23,7 +24,8 @@
     "pretest": "npm run build",
     "test": "node --test scripts/units.test.mjs",
     "smoke": "node scripts/smoke-all.mjs",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm test"
   },
   "keywords": [
     "mcp",
@@ -59,13 +61,13 @@
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@xmldom/xmldom": "^0.9.8",
-    "express": "^4.21.2",
+    "express": "^5.2.1",
     "mx-identifiers": "^1.0.0",
     "zod": "^4.2.0"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
-    "@types/express": "^4.17.21",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"

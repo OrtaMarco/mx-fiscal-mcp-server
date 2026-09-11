@@ -24,7 +24,7 @@ import {
   CFDI_TIPO,
   CFDI_USO,
 } from "mx-identifiers";
-import { MAX_XML_CHARS } from "../constants.js";
+import { MAX_REPORTED_CONCEPTOS, MAX_XML_CHARS, MAX_XML_ELEMENTS } from "../constants.js";
 import type { Finding } from "../format.js";
 import { reportRfc } from "./identifiers.js";
 
@@ -95,8 +95,13 @@ export interface CfdiDocument {
   receptor: CfdiParty & { domicilio: string; uso: string; uso_label: string | null };
   conceptos: CfdiConcepto[];
   concepto_count: number;
+  /** True when `conceptos` holds only the first MAX_REPORTED_CONCEPTOS lines. */
+  conceptos_truncated: boolean;
   total_trasladados: string;
   total_retenidos: string;
+  /** Local (state) taxes from the implocal complement, when present. */
+  total_traslados_locales: string;
+  total_retenciones_locales: string;
   stamped: boolean;
   timbre: CfdiTimbre | null;
   arithmetic: {
@@ -112,7 +117,7 @@ export interface CfdiDocument {
 export class CfdiParseError extends Error {
   constructor(
     message: string,
-    public readonly reason: "too_large" | "parse" | "not_cfdi",
+    public readonly reason: "too_large" | "parse" | "not_cfdi" | "doctype",
   ) {
     super(message);
     this.name = "CfdiParseError";
@@ -182,7 +187,9 @@ function num(value: string): number | null {
 }
 
 /**
- * subTotal − descuento + trasladados − retenidos should equal total. A CFDI
+ * subTotal − descuento + trasladados − retenidos should equal total, where the
+ * taxes include the local (state) ones of the implocal complement — the CFDI 4.0
+ * XSD defines Total over "federal and/or local" taxes. A CFDI
  * whose numbers do not add up is not necessarily invalid (rounding at the
  * concepto level is allowed within a centavo), so a mismatch is a warning, not
  * a failure.
@@ -193,6 +200,8 @@ function checkArithmetic(doc: {
   total: string;
   total_trasladados: string;
   total_retenidos: string;
+  total_traslados_locales: string;
+  total_retenciones_locales: string;
 }): CfdiDocument["arithmetic"] {
   const subTotal = num(doc.sub_total);
   const total = num(doc.total);
@@ -200,7 +209,12 @@ function checkArithmetic(doc: {
     return { declared_total: doc.total, computed_total: null, matches: null, difference: null };
   }
   const computed =
-    subTotal - (num(doc.descuento) ?? 0) + (num(doc.total_trasladados) ?? 0) - (num(doc.total_retenidos) ?? 0);
+    subTotal -
+    (num(doc.descuento) ?? 0) +
+    (num(doc.total_trasladados) ?? 0) -
+    (num(doc.total_retenidos) ?? 0) +
+    (num(doc.total_traslados_locales) ?? 0) -
+    (num(doc.total_retenciones_locales) ?? 0);
   const difference = total - computed;
   return {
     declared_total: doc.total,
@@ -222,6 +236,20 @@ export function parseCfdi(xml: string): CfdiDocument {
       `The XML is ${xml.length} characters, over the ${MAX_XML_CHARS} limit this server parses. Pass a single CFDI, not a batch.`,
       "too_large",
     );
+  }
+
+  // A CFDI never declares a DTD; refusing one up front removes every entity trick.
+  if (/<!DOCTYPE/i.test(xml)) {
+    throw new CfdiParseError("The XML declares a DOCTYPE, which a CFDI never does. Refusing to parse it.", "doctype");
+  }
+  let elements = 0;
+  for (const _ of xml.matchAll(/<[A-Za-z_]/g)) {
+    if (++elements > MAX_XML_ELEMENTS) {
+      throw new CfdiParseError(
+        `The XML has more than ${MAX_XML_ELEMENTS} elements, over the limit this server parses. Pass a single CFDI, not a batch.`,
+        "too_large",
+      );
+    }
   }
 
   const problems: string[] = [];
@@ -255,6 +283,7 @@ export function parseCfdi(xml: string): CfdiDocument {
   const conceptosEl = child(root, "Conceptos");
   const impuestosEl = child(root, "Impuestos");
   const timbreEl = descendants(child(root, "Complemento"), "TimbreFiscalDigital")[0] ?? null;
+  const implocalEl = descendants(child(root, "Complemento"), "ImpuestosLocales")[0] ?? null;
 
   const conceptos: CfdiConcepto[] = elementChildren(conceptosEl)
     .filter((n) => n.localName === "Concepto")
@@ -288,6 +317,8 @@ export function parseCfdi(xml: string): CfdiDocument {
     total: attr(root, "Total"),
     total_trasladados: attr(impuestosEl, "TotalImpuestosTrasladados"),
     total_retenidos: attr(impuestosEl, "TotalImpuestosRetenidos"),
+    total_traslados_locales: attr(implocalEl, "TotaldeTraslados"),
+    total_retenciones_locales: attr(implocalEl, "TotaldeRetenciones"),
   };
   const arithmetic = checkArithmetic(base);
 
@@ -337,10 +368,19 @@ export function parseCfdi(xml: string): CfdiDocument {
   if (arithmetic.matches === false) {
     findings.push({
       severity: "warn",
-      message: `The declared total (${arithmetic.declared_total}) differs from subtotal − discount + transferred − withheld (${arithmetic.computed_total}) by ${arithmetic.difference}.`,
+      message: `The declared total (${arithmetic.declared_total}) differs from subtotal − discount + transferred − withheld${implocalEl ? " (local taxes included)" : ""} (${arithmetic.computed_total}) by ${arithmetic.difference}.`,
     });
   } else if (arithmetic.matches === true) {
-    findings.push({ severity: "pass", message: "Totals add up: subtotal − discount + transferred − withheld = total." });
+    findings.push({
+      severity: "pass",
+      message: `Totals add up: subtotal − discount + transferred − withheld${implocalEl ? " (local taxes included)" : ""} = total.`,
+    });
+  }
+  if (conceptos.length > MAX_REPORTED_CONCEPTOS) {
+    findings.push({
+      severity: "info",
+      message: `The invoice has ${conceptos.length} conceptos; only the first ${MAX_REPORTED_CONCEPTOS} are included in the structured result. Totals and the arithmetic check cover all of them.`,
+    });
   }
 
   findings.push({
@@ -394,10 +434,13 @@ export function parseCfdi(xml: string): CfdiDocument {
       rfc_kind: receptorReport.kind,
       rfc_errors: receptorReport.errors.map((e) => e.code),
     },
-    conceptos,
+    conceptos: conceptos.slice(0, MAX_REPORTED_CONCEPTOS),
     concepto_count: conceptos.length,
+    conceptos_truncated: conceptos.length > MAX_REPORTED_CONCEPTOS,
     total_trasladados: base.total_trasladados,
     total_retenidos: base.total_retenidos,
+    total_traslados_locales: base.total_traslados_locales,
+    total_retenciones_locales: base.total_retenciones_locales,
     stamped: timbreEl !== null,
     timbre: timbreEl
       ? {

@@ -4,7 +4,8 @@
 
 import * as z from "zod/v4";
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
-import { responseFormatField } from "../format.js";
+import type { CallToolResult } from "@modelcontextprotocol/server";
+import { fail, responseFormatField } from "../format.js";
 
 /**
  * Every tool in this server reads: four of them are pure computation over the
@@ -37,4 +38,24 @@ export function identifierInput(description: string) {
 /** Render a `label: value` line only when the value is present. */
 export function optionalLine(label: string, value: string | null | undefined): string[] {
   return value ? [`- **${label}:** ${value}`] : [];
+}
+
+/**
+ * XML parsing is synchronous and memory-hungry, and cfdi_status spends a request
+ * at the SAT. Over HTTP many callers share one process, so these run a few at a
+ * time and a caller beyond that is told to retry instead of queueing unbounded.
+ */
+const MAX_HEAVY_CALLS = Number(process.env.MAX_CONCURRENT_CFDI) > 0 ? Number(process.env.MAX_CONCURRENT_CFDI) : 4;
+let heavyInFlight = 0;
+
+export async function withHeavySlot(run: () => Promise<CallToolResult>): Promise<CallToolResult> {
+  if (heavyInFlight >= MAX_HEAVY_CALLS) {
+    return fail(`Error: the server is already processing ${MAX_HEAVY_CALLS} CFDI requests; retry in a moment.`);
+  }
+  heavyInFlight++;
+  try {
+    return await run();
+  } finally {
+    heavyInFlight--;
+  }
 }

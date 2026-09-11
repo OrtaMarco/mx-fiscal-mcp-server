@@ -11,6 +11,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -19,6 +21,8 @@ import { parseCfdi, CfdiParseError } from "../dist/core/cfdi.js";
 import {
   buildExpression,
   buildSoapEnvelope,
+  expressionRfc,
+  validateStatusQuery,
   extractConsultaResult,
   formatExpressionTotal,
   interpret,
@@ -26,6 +30,7 @@ import {
 import { lookupCatalog, CATALOG_NAMES } from "../dist/core/catalogs.js";
 import { reportClabe, reportCurp, reportNss, reportRfc } from "../dist/core/identifiers.js";
 import { generateTestData } from "../dist/core/testdata.js";
+import { MAX_REPORTED_CONCEPTOS, MAX_XML_ELEMENTS } from "../dist/constants.js";
 import { clabeCheckDigit, validateClabe, validateCurp, validateNss, validateRfc } from "mx-identifiers";
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "test", "fixtures");
@@ -336,10 +341,23 @@ test("the CURP report decodes state, sex and century", () => {
   assert.equal(report.state_name, "Nacido en el extranjero");
   assert.equal(report.sex, "H");
   assert.equal(report.century_marker, "0");
-  // Born in 1931 yet carrying a *digit* marker: a legitimately issued CURP that
-  // predates RENAPO's century rule. The report must say the two disagree rather
-  // than mislabel the person as born this century.
-  assert.ok(report.findings.some((f) => /The two disagree/.test(f.message)));
+  // RENAPO: a digit at position 17 means born before 2000, so 31 is 1931 — and
+  // the report must say exactly that, never that the marker and date disagree.
+  assert.equal(report.birth_date, "1931-08-20");
+  assert.ok(report.findings.some((f) => /digit \('0'\), which marks a birth before 2000 — so the year is read as 1931/.test(f.message)));
+  assert.ok(!report.findings.some((f) => /disagree/.test(f.message)));
+});
+
+test("the CURP century marker is read the right way round for both centuries", () => {
+  for (const kind of ["person"]) {
+    for (const person of generateTestData(kind, 40).people) {
+      const report = reportCurp(person.curp);
+      const year = Number(report.birth_date.slice(0, 4));
+      const digit = /[0-9]/.test(report.century_marker);
+      assert.equal(digit, year < 2000, `${person.curp}: marker '${report.century_marker}' vs ${report.birth_date}`);
+      assert.ok(report.findings.some((f) => new RegExp(`read as ${year}`).test(f.message)), person.curp);
+    }
+  }
 });
 
 test("the CLABE report names the bank and keeps the plaza code verbatim", () => {
@@ -415,5 +433,148 @@ test("count is clamped to 1-100 instead of throwing", () => {
 
 test("generated data always carries the not-real warning", () => {
   const result = generateTestData("company", 1);
-  assert.ok(result.findings.some((f) => /corresponds to no real person or company/.test(f.message)));
+  const warning = result.findings.find((f) => /not taken from any real record/.test(f.message));
+  assert.ok(warning, "expected the generated-data warning");
+  // It must not promise the impossible: a common-name CURP can match a real one.
+  assert.match(warning.message, /coincide with a real person's by chance/);
+});
+
+// --- hostile or oversized XML ----------------------------------------------
+
+test("a DOCTYPE is refused before parsing, so no entity trick reaches the parser", () => {
+  const withDtd = `<?xml version="1.0"?><!DOCTYPE c [<!ENTITY x "boom">]>${stamped.replace(/^<\?xml[^>]*>/, "")}`;
+  assert.throws(() => parseCfdi(withDtd), (err) => err instanceof CfdiParseError && err.reason === "doctype");
+});
+
+test("an XML with more elements than the cap is refused unparsed", () => {
+  const flood = `<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4">${"<a/>".repeat(MAX_XML_ELEMENTS + 1)}</cfdi:Comprobante>`;
+  assert.throws(() => parseCfdi(flood), (err) => err instanceof CfdiParseError && err.reason === "too_large");
+});
+
+test("conceptos beyond the reporting cap are counted but not all returned", () => {
+  const one = /<cfdi:Concepto\b[\s\S]*?<\/cfdi:Concepto>/.exec(stamped)[0];
+  const many = stamped.replace(one, one.repeat(MAX_REPORTED_CONCEPTOS + 20));
+  const doc = parseCfdi(many);
+  assert.ok(doc.concepto_count > MAX_REPORTED_CONCEPTOS);
+  assert.equal(doc.conceptos.length, MAX_REPORTED_CONCEPTOS);
+  assert.equal(doc.conceptos_truncated, true);
+  assert.equal(parseCfdi(stamped).conceptos_truncated, false);
+});
+
+test("local taxes from the implocal complement count toward the declared total", () => {
+  const implocal =
+    '<implocal:ImpuestosLocales xmlns:implocal="http://www.sat.gob.mx/implocal" version="1.0" TotaldeRetenciones="0.00" TotaldeTraslados="30.00">' +
+    '<implocal:TrasladosLocales ImpLocTrasladado="ISH" TasadeTraslado="3.00" Importe="30.00"/></implocal:ImpuestosLocales>';
+  const base = parseCfdi(stamped);
+  const withLocal = stamped
+    .replace(`Total="${base.total}"`, `Total="${(Number(base.total) + 30).toFixed(2)}"`)
+    .replace(/<cfdi:Complemento>/, `<cfdi:Complemento>${implocal}`);
+  const doc = parseCfdi(withLocal);
+  assert.equal(doc.total_traslados_locales, "30.00");
+  assert.equal(doc.arithmetic.matches, true, JSON.stringify(doc.arithmetic));
+  // Control: the same total without the complement no longer adds up.
+  const withoutLocal = withLocal.replace(implocal, "");
+  assert.equal(parseCfdi(withoutLocal).arithmetic.matches, false);
+});
+
+// --- SAT query screening -----------------------------------------------------
+
+test("an RFC with '&' is carried as &amp; in the expression, whichever way it was typed", () => {
+  assert.equal(expressionRfc("ñ&a010101aaa"), "Ñ&amp;A010101AAA");
+  assert.equal(expressionRfc("Ñ&amp;A010101AAA"), "Ñ&amp;A010101AAA");
+  const expression = buildExpression({ rfc_emisor: "Ñ&A010101AAA", rfc_receptor: "XAXX010101000", total: "10", uuid: "5a7b3c1d-9e2f-4a6b-8c0d-1e2f3a4b5c6d" });
+  assert.ok(expression.startsWith("?re=Ñ&amp;A010101AAA&rr=XAXX010101000&tt=10.0&id="));
+  // The envelope escapes the expression once more, as nodecfdi does.
+  assert.ok(buildSoapEnvelope(expression).includes("?re=Ñ&amp;amp;A010101AAA&amp;rr="));
+});
+
+test("validateStatusQuery refuses malformed fields before they cost a SAT request", () => {
+  const good = { rfc_emisor: "TES150312DX2", rfc_receptor: "XAXX010101000", total: "1160.00", uuid: "5A7B3C1D-9E2F-4A6B-8C0D-1E2F3A4B5C6D" };
+  assert.deepEqual(validateStatusQuery(good), []);
+  assert.deepEqual(validateStatusQuery({ ...good, rfc_emisor: "Ñ&amp;A010101AAA" }), []);
+  for (const [field, value] of [
+    ["total", "1,160.00"],
+    ["total", "0x10"],
+    ["total", "-5"],
+    ["uuid", "not-a-uuid"],
+    ["rfc_receptor", "ABC"],
+  ]) {
+    const problems = validateStatusQuery({ ...good, [field]: value });
+    assert.equal(problems.length, 1, `${field}=${value}`);
+    assert.ok(problems[0].startsWith(field), problems[0]);
+  }
+});
+
+// --- HTTP transport defaults ---------------------------------------------------
+
+async function freePort() {
+  const probe = http.createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const { port } = probe.address();
+  await new Promise((resolve) => probe.close(resolve));
+  return port;
+}
+
+async function startHttpServer(env) {
+  const port = await freePort();
+  const base = { ...process.env };
+  for (const key of ["HOST", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MCP_AUTH_TOKEN"]) delete base[key];
+  const child = spawn(process.execPath, [fileURLToPath(new URL("../dist/index.js", import.meta.url))], {
+    env: { ...base, TRANSPORT: "http", PORT: String(port), ...env },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let log = "";
+  child.stderr.on("data", (c) => (log += c));
+  for (let i = 0; i < 100 && !/running on http/.test(log); i++) await new Promise((r) => setTimeout(r, 50));
+  return { port, log: () => log, stop: () => new Promise((r) => (child.once("exit", r), child.kill("SIGTERM"))) };
+}
+
+function post(port, headers = {}, body = '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}') {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: "127.0.0.1", port, path: "/mcp", method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-06-18", ...headers } },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => resolve({ status: res.statusCode, type: res.headers["content-type"] ?? "", body: data }));
+      },
+    );
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+test("HTTP transport binds to loopback and rejects a foreign Host or Origin by default", async () => {
+  const srv = await startHttpServer({});
+  try {
+    assert.match(srv.log(), /http:\/\/127\.0\.0\.1:/);
+    assert.equal((await post(srv.port)).status, 200);
+    assert.equal((await post(srv.port, { host: "attacker.example" })).status, 403);
+    assert.equal((await post(srv.port, { origin: "http://attacker.example" })).status, 403);
+  } finally {
+    await srv.stop();
+  }
+});
+
+test("HTTP transport enforces MCP_AUTH_TOKEN and answers parse errors in JSON-RPC", async () => {
+  const srv = await startHttpServer({ MCP_AUTH_TOKEN: "s3cret-token" });
+  try {
+    assert.equal((await post(srv.port)).status, 401);
+    assert.equal((await post(srv.port, { authorization: "Bearer s3cret-token" })).status, 200);
+    const broken = await post(srv.port, { authorization: "Bearer s3cret-token" }, "{not json");
+    assert.equal(broken.status, 400);
+    assert.equal(JSON.parse(broken.body).error.code, -32700);
+  } finally {
+    await srv.stop();
+  }
+});
+
+test("HTTP transport on a public bind warns when it has no Host allowlist or token", async () => {
+  const srv = await startHttpServer({ HOST: "0.0.0.0" });
+  try {
+    assert.match(srv.log(), /without ALLOWED_HOSTS/);
+    assert.match(srv.log(), /without MCP_AUTH_TOKEN/);
+  } finally {
+    await srv.stop();
+  }
 });

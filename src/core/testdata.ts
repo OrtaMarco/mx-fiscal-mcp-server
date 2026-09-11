@@ -100,7 +100,7 @@ export function generateTestData(kind: TestDataKind, count: number): TestDataRes
       {
         severity: "info",
         message:
-          "Every identifier here satisfies its check digit but corresponds to no real person or company. Use it for fixtures, seeds and demos — never as a stand-in for a customer's real data.",
+          "Every identifier here satisfies its check digit and is generated, not taken from any real record. Built from common names, a CURP or phone number can still coincide with a real person's by chance, so use them for fixtures, seeds and demos only — never as a stand-in for a customer's real data, and never send them to the SAT or a PAC.",
       },
       {
         severity: "info",

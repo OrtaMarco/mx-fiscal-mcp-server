@@ -47,6 +47,49 @@ export function formatExpressionTotal(total: string): string {
 }
 
 /** Build the `expresionImpresa` the service expects. */
+/**
+ * RFCs may contain '&' (e.g. «Ñ&A…»). The printed-representation expression
+ * carries it as '&amp;' — nodecfdi does the same — and it has to be encoded
+ * before upper-casing, or an already-encoded '&amp;' would become '&AMP;'.
+ */
+export function expressionRfc(rfc: string): string {
+  return rfc.trim().replace(/&amp;/gi, "&").toUpperCase().replace(/&/g, "&amp;");
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RFC_SHAPE_RE = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/i;
+const TOTAL_RE = /^\d{1,18}(?:\.\d{1,6})?$/;
+
+/**
+ * Screen the four query values before spending a request on them. Only the
+ * *shape* is checked: a generic RFC like XAXX010101000 fails its own check digit
+ * yet appears on real invoices, so check digits are not enforced here.
+ * @returns one message per problem; empty when the query can be sent.
+ */
+export function validateStatusQuery(input: {
+  rfc_emisor: string;
+  rfc_receptor: string;
+  total: string;
+  uuid: string;
+}): string[] {
+  const problems: string[] = [];
+  for (const [field, value] of [
+    ["rfc_emisor", input.rfc_emisor],
+    ["rfc_receptor", input.rfc_receptor],
+  ] as const) {
+    if (!RFC_SHAPE_RE.test(value.trim().replace(/&amp;/gi, "&"))) {
+      problems.push(`${field} '${value}' is not shaped like an RFC (12 or 13 characters: letters, six-digit date, three-character homoclave).`);
+    }
+  }
+  if (!TOTAL_RE.test(input.total.trim())) {
+    problems.push(`total '${input.total}' must be a plain decimal exactly as written in the XML, e.g. '1160.00' — no thousands separators, signs or currency symbols.`);
+  }
+  if (!UUID_RE.test(input.uuid.trim())) {
+    problems.push(`uuid '${input.uuid}' is not a UUID (8-4-4-4-12 hexadecimal digits).`);
+  }
+  return problems;
+}
+
 export function buildExpression(input: {
   rfc_emisor: string;
   rfc_receptor: string;
@@ -54,8 +97,8 @@ export function buildExpression(input: {
   uuid: string;
 }): string {
   return (
-    `?re=${input.rfc_emisor.trim().toUpperCase()}` +
-    `&rr=${input.rfc_receptor.trim().toUpperCase()}` +
+    `?re=${expressionRfc(input.rfc_emisor)}` +
+    `&rr=${expressionRfc(input.rfc_receptor)}` +
     `&tt=${formatExpressionTotal(input.total)}` +
     `&id=${input.uuid.trim().toUpperCase()}`
   );

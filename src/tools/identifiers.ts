@@ -81,7 +81,7 @@ Example: "Is GODE561231GR8 a valid RFC?" -> validate_rfc(value="GODE561231GR8").
 The 18th character is a base-37 modulus-10 check digit over the first 17, and this checks it. Two details it gets right that a regex does not:
 
   - **The state keys are RENAPO's own.** 'DF' is Ciudad de México, 'MC' is Estado de México, 'NE' means born abroad. They do not match the INEGI or ISO 3166-2:MX codes, so a lookup against those tables silently mislabels people.
-  - **The homoclave character carries the century.** A digit means born from 2000 onwards; a letter means before 2000. Without it, positions 5-10 ('99' as a year) are ambiguous.
+  - **The homoclave character carries the century.** A digit (position 17) means born before 2000; a letter means from 2000 onwards. Without it, positions 5-10 ('99' as a year) are ambiguous.
 
 Names that would spell one of RENAPO's inconvenient words are flagged: a real CURP carries an X in the second position instead.
 
@@ -225,13 +225,13 @@ Example: "Is 12345678903 a valid NSS?" -> validate_nss(value="12345678903").`,
     "generate_test_data",
     {
       title: "Generate Mexican Test Data",
-      description: `Generate structurally valid Mexican identifiers for fixtures, database seeds and demos — no real person or company involved.
+      description: `Generate structurally valid Mexican identifiers for fixtures, database seeds and demos — generated, not taken from any real record.
 
 For a **person** each record carries a coherent set: the RFC and the CURP are derived from the *same* name, sex, birth date and state, the CLABE's bank code is a real Banxico participant, and the NSS satisfies its Luhn digit. For a **company**, a razón social with a matching persona-moral RFC and a CLABE.
 
 Why generated instead of hand-written: an RFC or CURP typed by hand almost never satisfies its check digit, so it fails the first validation your own code runs, and a seed file full of 'AAAA010101AAA' teaches your tests nothing.
 
-**These pass validation and belong to nobody.** They are not registered at the SAT, RENAPO, IMSS or Banxico — do not send them to the SAT's status service or to a PAC.
+**These pass validation but are nobody's on purpose.** They are generated from common names, so a CURP or phone number can coincide with a real person's by chance; they are not looked up at the SAT, RENAPO, IMSS or Banxico — do not send them to the SAT's status service or to a PAC.
 
 Args:
   - kind ('person' | 'company'): what to generate (default 'person').

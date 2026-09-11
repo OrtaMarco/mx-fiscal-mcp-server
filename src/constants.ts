@@ -2,8 +2,14 @@
  * Shared constants for the Mexican fiscal MCP server.
  */
 
+import { createRequire } from "node:module";
+
 export const SERVER_NAME = "mx-fiscal-mcp-server";
-export const SERVER_VERSION = "1.0.0";
+
+/** Read from package.json (always shipped) so the two can never disagree. */
+export const SERVER_VERSION: string = (
+  createRequire(import.meta.url)("../package.json") as { version: string }
+).version;
 
 /** Maximum size of any tool response, in characters, before truncation. */
 export const CHARACTER_LIMIT = 25_000;
@@ -42,11 +48,20 @@ export const SAT_RETRIES = 1;
 export const SAT_RETRY_DELAY_MS = 750;
 
 /** User agent sent to the SAT. Identifies the client honestly. */
-export const USER_AGENT =
-  "mx-fiscal-mcp-server/1.0 (+https://ortamarco.me; MCP CFDI status reader)";
+export const USER_AGENT = `${SERVER_NAME}/${SERVER_VERSION} (+https://github.com/OrtaMarco/mx-fiscal-mcp-server)`;
 
-/** Largest CFDI XML we will parse, in characters. Guards against runaway input. */
-export const MAX_XML_CHARS = 4_000_000;
+/**
+ * Largest CFDI XML we will parse, in characters (override with MAX_XML_CHARS).
+ * xmldom builds the whole DOM in memory, roughly 250 bytes per element, so the
+ * size cap and the element cap below together bound one parse's memory.
+ */
+export const MAX_XML_CHARS = Number(process.env.MAX_XML_CHARS) > 0 ? Number(process.env.MAX_XML_CHARS) : 2_000_000;
+
+/** Largest number of elements a CFDI may contain before it is refused unparsed. */
+export const MAX_XML_ELEMENTS = 200_000;
+
+/** Conceptos returned in `parse_cfdi`'s structured payload; the count is always exact. */
+export const MAX_REPORTED_CONCEPTOS = 500;
 
 /** Upper bound on `generate_test_data`'s `count`. */
 export const MAX_GENERATED_RECORDS = 100;

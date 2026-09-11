@@ -214,8 +214,11 @@ export const CfdiSchema = z.object({
     }),
   ),
   concepto_count: z.number(),
+  conceptos_truncated: z.boolean(),
   total_trasladados: z.string(),
   total_retenidos: z.string(),
+  total_traslados_locales: z.string(),
+  total_retenciones_locales: z.string(),
   stamped: z.boolean(),
   timbre: z
     .object({

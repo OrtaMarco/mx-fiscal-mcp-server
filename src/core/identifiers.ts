@@ -190,7 +190,7 @@ export interface CurpReport {
   sex_label: string | null;
   state_key: string | null;
   state_name: string | null;
-  /** The 18th character is a digit for people born from 2000 onwards, a letter before that. */
+  /** The 17th character is a digit for people born before 2000, a letter from 2000 onwards. */
   century_marker: string | null;
   expected_check_digit: string | null;
   errors: IdentifierError[];
@@ -220,25 +220,15 @@ export function reportCurp(input: string): CurpReport {
 
   const homoclave = result.parts?.homoclave ?? null;
   if (homoclave) {
-    const markerSaysThisCentury = /[0-9]/.test(homoclave);
-    const birthYear = result.birthDate ? Number(result.birthDate.slice(0, 4)) : null;
-    const dateSaysThisCentury = birthYear === null ? null : birthYear >= 2000;
-    if (dateSaysThisCentury !== null && dateSaysThisCentury !== markerSaysThisCentury) {
-      // Not an error. RENAPO only started using the digit/letter split to
-      // disambiguate the two-digit year in the mid-1990s, so plenty of
-      // legitimately issued CURPs break the rule. The birth date wins.
-      findings.push({
-        severity: "info",
-        message: `The homoclave character is ${markerSaysThisCentury ? `a digit ('${homoclave}'), which under the current rule marks a birth from 2000 onwards` : `a letter ('${homoclave}'), which under the current rule marks a birth before 2000`} — but the date section resolves to ${result.birthDate}. The two disagree, which is common in CURPs issued before RENAPO adopted the marker; do not reject the CURP over it.`,
-      });
-    } else {
-      findings.push({
-        severity: "info",
-        message: markerSaysThisCentury
-          ? `The homoclave character is a digit ('${homoclave}'), which marks a birth from 2000 onwards.`
-          : `The homoclave character is a letter ('${homoclave}'), which marks a birth before 2000.`,
-      });
-    }
+    // RENAPO's rule: a digit for births up to 1999, a letter from 2000 onwards.
+    // It is what resolves the two-digit year, so the birth date above is read
+    // through it and the two cannot disagree.
+    findings.push({
+      severity: "info",
+      message: /[0-9]/.test(homoclave)
+        ? `The homoclave character is a digit ('${homoclave}'), which marks a birth before 2000 — so the year is read as 19${result.birthDate?.slice(2, 4) ?? "YY"}.`
+        : `The homoclave character is a letter ('${homoclave}'), which marks a birth from 2000 onwards — so the year is read as 20${result.birthDate?.slice(2, 4) ?? "YY"}.`,
+    });
   }
 
   return {

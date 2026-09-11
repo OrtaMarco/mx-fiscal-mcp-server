@@ -17,7 +17,7 @@ const INSTRUCTIONS = `Mexican tax and banking toolkit. Every tool is read-only a
 
 Guidance:
 - Identifier questions: \`validate_rfc\`, \`validate_curp\`, \`validate_clabe\`, \`validate_nss\`. Each returns the normalised value, the parsed fields and a legible reason for every failure.
-- Fixtures, seeds and demos: \`generate_test_data\`. Its output satisfies every check digit and belongs to nobody.
+- Fixtures, seeds and demos: \`generate_test_data\`. Its output satisfies every check digit and is generated, not taken from real records (a value can still coincide with a real one by chance).
 - An invoice XML in hand: \`parse_cfdi\` reads it (labels every catalogue code, validates both RFCs, checks the arithmetic); \`cfdi_status\` asks the SAT whether it is still live. Prefer passing the whole \`xml\` to \`cfdi_status\` over typing the four fields — a mis-formatted total is the commonest cause of a false 'No Encontrado'.
 - Code tables: \`sat_catalog_lookup\` covers régimen fiscal, uso CFDI, forma and método de pago, tipo de comprobante, objeto de impuesto, impuestos, CLABE banks and CURP states.
 

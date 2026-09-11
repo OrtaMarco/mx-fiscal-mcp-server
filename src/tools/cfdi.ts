@@ -6,10 +6,10 @@ import * as z from "zod/v4";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { fail, field, renderFindings, respond, responseFormatField, table } from "../format.js";
 import { CfdiParseError, parseCfdi } from "../core/cfdi.js";
-import { queryCfdiStatus } from "../core/sat.js";
+import { queryCfdiStatus, validateStatusQuery } from "../core/sat.js";
 import { CfdiSchema, CfdiStatusSchema } from "../schemas.js";
 import { SAT_CONSULTA_URL } from "../constants.js";
-import { READ_ONLY, READ_ONLY_NETWORK } from "./_shared.js";
+import { READ_ONLY, READ_ONLY_NETWORK, withHeavySlot } from "./_shared.js";
 
 const xmlField = z
   .string()
@@ -46,88 +46,89 @@ Example: "Read this invoice and tell me who issued it and for how much" -> parse
       outputSchema: CfdiSchema,
       annotations: READ_ONLY,
     },
-    async ({ xml, response_format }) => {
-      let doc;
-      try {
-        doc = parseCfdi(xml);
-      } catch (err) {
-        if (err instanceof CfdiParseError) return fail(`Error: ${err.message}`);
-        return fail(`Error reading the CFDI: ${err instanceof Error ? err.message : String(err)}`);
-      }
+    async ({ xml, response_format }) =>
+      withHeavySlot(async () => {
+        let doc;
+        try {
+          doc = parseCfdi(xml);
+        } catch (err) {
+          if (err instanceof CfdiParseError) return fail(`Error: ${err.message}`);
+          return fail(`Error reading the CFDI: ${err instanceof Error ? err.message : String(err)}`);
+        }
 
-      return respond(doc, response_format, () =>
-        [
-          `# CFDI ${doc.serie}${doc.folio ? `-${doc.folio}` : ""} — ${doc.total} ${doc.moneda}`,
-          "",
-          `${doc.stamped ? "✅ Stamped" : "⚠️ Unstamped"} · version ${doc.version || "?"} · ${doc.tipo_label ?? doc.tipo}`,
-          "",
-          "## Comprobante",
-          field("Issued", doc.fecha),
-          field("Type", doc.tipo_label ? `${doc.tipo} — ${doc.tipo_label}` : doc.tipo),
-          field("Payment form", doc.forma_pago_label ? `${doc.forma_pago} — ${doc.forma_pago_label}` : doc.forma_pago),
-          field(
-            "Payment method",
-            doc.metodo_pago_label ? `${doc.metodo_pago} — ${doc.metodo_pago_label}` : doc.metodo_pago,
-          ),
-          field("Currency", doc.tipo_cambio ? `${doc.moneda} (rate ${doc.tipo_cambio})` : doc.moneda),
-          field("Issued at postcode", doc.lugar_expedicion),
-          "",
-          "## Emisor",
-          field("RFC", `${doc.emisor.rfc} ${doc.emisor.rfc_valid ? "✅" : "❌"}`),
-          field("Name", doc.emisor.nombre),
-          field(
-            "Regime",
-            doc.emisor.regimen_label ? `${doc.emisor.regimen} — ${doc.emisor.regimen_label}` : doc.emisor.regimen,
-          ),
-          "",
-          "## Receptor",
-          field("RFC", `${doc.receptor.rfc} ${doc.receptor.rfc_valid ? "✅" : "❌"}`),
-          field("Name", doc.receptor.nombre),
-          field("Tax address (postcode)", doc.receptor.domicilio),
-          field(
-            "Regime",
-            doc.receptor.regimen_label
-              ? `${doc.receptor.regimen} — ${doc.receptor.regimen_label}`
-              : doc.receptor.regimen,
-          ),
-          field("CFDI use", doc.receptor.uso_label ? `${doc.receptor.uso} — ${doc.receptor.uso_label}` : doc.receptor.uso),
-          "",
-          `## Conceptos (${doc.concepto_count})`,
-          table(
-            ["Description", "Qty", "Unit price", "Amount", "Taxes"],
-            doc.conceptos.map((c) => [
-              c.descripcion.slice(0, 60),
-              c.cantidad,
-              c.valor_unitario,
-              c.importe,
-              [
-                ...c.traslados.map((t) => `+${t.impuesto_label ?? t.impuesto} ${t.importe}`),
-                ...c.retenciones.map((r) => `−${r.impuesto_label ?? r.impuesto} ${r.importe}`),
-              ].join(", ") || "—",
-            ]),
-          ),
-          "",
-          "## Totals",
-          field("Subtotal", doc.sub_total),
-          field("Discount", doc.descuento),
-          field("Transferred taxes", doc.total_trasladados),
-          field("Withheld taxes", doc.total_retenidos),
-          field("Total", doc.total),
-          "",
-          "## Timbre fiscal digital",
-          ...(doc.timbre
-            ? [
-                field("UUID", doc.timbre.uuid),
-                field("Stamped at", doc.timbre.fecha_timbrado),
-                field("SAT certificate", doc.timbre.no_certificado_sat),
-                field("PAC RFC", doc.timbre.rfc_prov_certif),
-              ]
-            : ["- The document carries no Timbre Fiscal Digital."]),
-          "",
-          renderFindings(doc.findings),
-        ].join("\n"),
-      );
-    },
+        return respond(doc, response_format, () =>
+          [
+            `# CFDI ${doc.serie}${doc.folio ? `-${doc.folio}` : ""} — ${doc.total} ${doc.moneda}`,
+            "",
+            `${doc.stamped ? "✅ Stamped" : "⚠️ Unstamped"} · version ${doc.version || "?"} · ${doc.tipo_label ?? doc.tipo}`,
+            "",
+            "## Comprobante",
+            field("Issued", doc.fecha),
+            field("Type", doc.tipo_label ? `${doc.tipo} — ${doc.tipo_label}` : doc.tipo),
+            field("Payment form", doc.forma_pago_label ? `${doc.forma_pago} — ${doc.forma_pago_label}` : doc.forma_pago),
+            field(
+              "Payment method",
+              doc.metodo_pago_label ? `${doc.metodo_pago} — ${doc.metodo_pago_label}` : doc.metodo_pago,
+            ),
+            field("Currency", doc.tipo_cambio ? `${doc.moneda} (rate ${doc.tipo_cambio})` : doc.moneda),
+            field("Issued at postcode", doc.lugar_expedicion),
+            "",
+            "## Emisor",
+            field("RFC", `${doc.emisor.rfc} ${doc.emisor.rfc_valid ? "✅" : "❌"}`),
+            field("Name", doc.emisor.nombre),
+            field(
+              "Regime",
+              doc.emisor.regimen_label ? `${doc.emisor.regimen} — ${doc.emisor.regimen_label}` : doc.emisor.regimen,
+            ),
+            "",
+            "## Receptor",
+            field("RFC", `${doc.receptor.rfc} ${doc.receptor.rfc_valid ? "✅" : "❌"}`),
+            field("Name", doc.receptor.nombre),
+            field("Tax address (postcode)", doc.receptor.domicilio),
+            field(
+              "Regime",
+              doc.receptor.regimen_label
+                ? `${doc.receptor.regimen} — ${doc.receptor.regimen_label}`
+                : doc.receptor.regimen,
+            ),
+            field("CFDI use", doc.receptor.uso_label ? `${doc.receptor.uso} — ${doc.receptor.uso_label}` : doc.receptor.uso),
+            "",
+            `## Conceptos (${doc.concepto_count}${doc.conceptos_truncated ? `, first ${doc.conceptos.length} shown` : ""})`,
+            table(
+              ["Description", "Qty", "Unit price", "Amount", "Taxes"],
+              doc.conceptos.map((c) => [
+                c.descripcion.slice(0, 60),
+                c.cantidad,
+                c.valor_unitario,
+                c.importe,
+                [
+                  ...c.traslados.map((t) => `+${t.impuesto_label ?? t.impuesto} ${t.importe}`),
+                  ...c.retenciones.map((r) => `−${r.impuesto_label ?? r.impuesto} ${r.importe}`),
+                ].join(", ") || "—",
+              ]),
+            ),
+            "",
+            "## Totals",
+            field("Subtotal", doc.sub_total),
+            field("Discount", doc.descuento),
+            field("Transferred taxes", doc.total_trasladados),
+            field("Withheld taxes", doc.total_retenidos),
+            field("Total", doc.total),
+            "",
+            "## Timbre fiscal digital",
+            ...(doc.timbre
+              ? [
+                  field("UUID", doc.timbre.uuid),
+                  field("Stamped at", doc.timbre.fecha_timbrado),
+                  field("SAT certificate", doc.timbre.no_certificado_sat),
+                  field("PAC RFC", doc.timbre.rfc_prov_certif),
+                ]
+              : ["- The document carries no Timbre Fiscal Digital."]),
+            "",
+            renderFindings(doc.findings),
+          ].join("\n"),
+        );
+      }),
   );
 
   // --- cfdi_status ---------------------------------------------------------
@@ -179,93 +180,98 @@ Example: "Is this invoice still valid?" -> cfdi_status(xml="<cfdi:Comprobante �
       outputSchema: CfdiStatusSchema,
       annotations: READ_ONLY_NETWORK,
     },
-    async ({ xml, rfc_emisor, rfc_receptor, total, uuid, response_format }) => {
-      let source: "fields" | "xml" = "fields";
-      let query: { rfc_emisor: string; rfc_receptor: string; total: string; uuid: string };
+    async ({ xml, rfc_emisor, rfc_receptor, total, uuid, response_format }) =>
+      withHeavySlot(async () => {
+        let source: "fields" | "xml" = "fields";
+        let query: { rfc_emisor: string; rfc_receptor: string; total: string; uuid: string };
 
-      if (xml && xml.trim()) {
-        source = "xml";
-        let doc;
-        try {
-          doc = parseCfdi(xml);
-        } catch (err) {
-          if (err instanceof CfdiParseError) return fail(`Error: ${err.message}`);
-          return fail(`Error reading the CFDI: ${err instanceof Error ? err.message : String(err)}`);
+        if (xml && xml.trim()) {
+          source = "xml";
+          let doc;
+          try {
+            doc = parseCfdi(xml);
+          } catch (err) {
+            if (err instanceof CfdiParseError) return fail(`Error: ${err.message}`);
+            return fail(`Error reading the CFDI: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          if (!doc.timbre?.uuid) {
+            return fail(
+              "Error: this CFDI carries no Timbre Fiscal Digital, so it has no UUID and the SAT has no record of it. An unstamped XML cannot be looked up.",
+            );
+          }
+          query = {
+            rfc_emisor: doc.emisor.rfc,
+            rfc_receptor: doc.receptor.rfc,
+            total: doc.total,
+            uuid: doc.timbre.uuid,
+          };
+        } else {
+          const missing = [
+            ["rfc_emisor", rfc_emisor],
+            ["rfc_receptor", rfc_receptor],
+            ["total", total],
+            ["uuid", uuid],
+          ]
+            .filter(([, v]) => !v || !String(v).trim())
+            .map(([k]) => k);
+          if (missing.length > 0) {
+            return fail(
+              `Error: missing ${missing.join(", ")}. Pass either the whole invoice as \`xml\`, or all four of rfc_emisor, rfc_receptor, total and uuid.`,
+            );
+          }
+          query = {
+            rfc_emisor: rfc_emisor as string,
+            rfc_receptor: rfc_receptor as string,
+            total: total as string,
+            uuid: uuid as string,
+          };
+          const problems = validateStatusQuery(query);
+          if (problems.length > 0) {
+            return fail(`Error: not sent to the SAT, because the query would come back 'No Encontrado' for the wrong reason:\n- ${problems.join("\n- ")}`);
+          }
         }
-        if (!doc.timbre?.uuid) {
-          return fail(
-            "Error: this CFDI carries no Timbre Fiscal Digital, so it has no UUID and the SAT has no record of it. An unstamped XML cannot be looked up.",
-          );
-        }
-        query = {
-          rfc_emisor: doc.emisor.rfc,
-          rfc_receptor: doc.receptor.rfc,
-          total: doc.total,
-          uuid: doc.timbre.uuid,
-        };
-      } else {
-        const missing = [
-          ["rfc_emisor", rfc_emisor],
-          ["rfc_receptor", rfc_receptor],
-          ["total", total],
-          ["uuid", uuid],
-        ]
-          .filter(([, v]) => !v || !String(v).trim())
-          .map(([k]) => k);
-        if (missing.length > 0) {
-          return fail(
-            `Error: missing ${missing.join(", ")}. Pass either the whole invoice as \`xml\`, or all four of rfc_emisor, rfc_receptor, total and uuid.`,
-          );
-        }
-        query = {
-          rfc_emisor: rfc_emisor as string,
-          rfc_receptor: rfc_receptor as string,
-          total: total as string,
-          uuid: uuid as string,
-        };
-      }
 
-      const result = await queryCfdiStatus(query);
-      const payload = { ...result, source };
+        const result = await queryCfdiStatus(query);
+        const payload = { ...result, source };
 
-      return respond(payload, response_format, () => {
-        if (!payload.available || !payload.status) {
+        return respond(payload, response_format, () => {
+          if (!payload.available || !payload.status) {
+            return [
+              `# CFDI status — unavailable`,
+              "",
+              `⚠️ The SAT service could not be reached after ${payload.attempts} attempt(s) in ${payload.elapsed_ms} ms.`,
+              "",
+              field("Reason", payload.unavailable_reason),
+              field("Endpoint", payload.endpoint),
+              field("Expression sent", payload.expression),
+              "",
+              renderFindings(payload.findings),
+            ].join("\n");
+          }
+          const s = payload.status;
           return [
-            `# CFDI status — unavailable`,
+            `# CFDI status — ${s.estado || "(no state returned)"}`,
             "",
-            `⚠️ The SAT service could not be reached after ${payload.attempts} attempt(s) in ${payload.elapsed_ms} ms.`,
+            `${s.document_state === "vigente" ? "✅" : s.document_state === "cancelado" ? "⚠️" : "❌"} ${s.document_meaning}`,
             "",
-            field("Reason", payload.unavailable_reason),
-            field("Endpoint", payload.endpoint),
+            field("UUID queried", query.uuid.toUpperCase()),
+            field("Códigos de estatus", s.codigo_estatus),
+            field("Es cancelable", s.es_cancelable || "—"),
+            field("Estatus de cancelación", s.estatus_cancelacion || "—"),
+            field("Validación EFOS", s.validacion_efos || "—"),
             field("Expression sent", payload.expression),
+            field("Answered in", `${payload.elapsed_ms} ms (${payload.attempts} attempt(s))`),
+            "",
+            "## What each field means",
+            `- **Cancellability:** ${s.cancellable_meaning}`,
+            `- **Cancellation:** ${s.cancellation_meaning}`,
+            `- **EFOS:** ${s.efos_meaning}`,
             "",
             renderFindings(payload.findings),
+            "",
+            `_Source: ${SAT_CONSULTA_URL} (public, no credentials)._`,
           ].join("\n");
-        }
-        const s = payload.status;
-        return [
-          `# CFDI status — ${s.estado || "(no state returned)"}`,
-          "",
-          `${s.document_state === "vigente" ? "✅" : s.document_state === "cancelado" ? "⚠️" : "❌"} ${s.document_meaning}`,
-          "",
-          field("UUID queried", query.uuid.toUpperCase()),
-          field("Códigos de estatus", s.codigo_estatus),
-          field("Es cancelable", s.es_cancelable || "—"),
-          field("Estatus de cancelación", s.estatus_cancelacion || "—"),
-          field("Validación EFOS", s.validacion_efos || "—"),
-          field("Expression sent", payload.expression),
-          field("Answered in", `${payload.elapsed_ms} ms (${payload.attempts} attempt(s))`),
-          "",
-          "## What each field means",
-          `- **Cancellability:** ${s.cancellable_meaning}`,
-          `- **Cancellation:** ${s.cancellation_meaning}`,
-          `- **EFOS:** ${s.efos_meaning}`,
-          "",
-          renderFindings(payload.findings),
-          "",
-          `_Source: ${SAT_CONSULTA_URL} (public, no credentials)._`,
-        ].join("\n");
-      });
-    },
+        });
+      }),
   );
 }
