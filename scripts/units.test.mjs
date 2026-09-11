@@ -316,6 +316,8 @@ test("XAXX010101000 is valid but does NOT satisfy its check digit", () => {
   assert.equal(report.valid, true);
   assert.equal(report.is_generic, true);
   assert.equal(report.check_digit_satisfied, false);
+  // The algorithm asks for a 4; the field must say so, not echo the 0 the SAT wrote.
+  assert.equal(report.expected_check_digit, "4");
   assert.ok(report.findings.some((f) => /does NOT satisfy/.test(f.message)));
 });
 

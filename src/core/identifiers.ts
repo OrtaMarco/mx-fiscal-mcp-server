@@ -160,7 +160,12 @@ export function reportRfc(input: string): RfcReport {
     generic_note: result.genericNote ?? null,
     parts: result.parts,
     birth_date: result.birthDate,
-    expected_check_digit: result.expectedCheckDigit,
+    // For the SAT generics mx-identifiers echoes the digit as written; report the
+    // one the algorithm computes, or `expected 0` sits next to `not satisfied`.
+    expected_check_digit:
+      isGeneric && result.normalized.length >= 12
+        ? rfcCheckDigit(result.normalized.slice(0, -1))
+        : result.expectedCheckDigit,
     check_digit_satisfied:
       result.normalized.length >= 12
         ? rfcCheckDigit(result.normalized.slice(0, -1)) === result.normalized.slice(-1)
