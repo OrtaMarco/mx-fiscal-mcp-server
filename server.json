@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.OrtaMarco/mx-fiscal-mcp-server",
+  "title": "Mexican Tax & Banking",
+  "description": "Validate RFC, CURP, CLABE and NSS, read CFDI 4.0 invoices and check their SAT status. No keys.",
+  "repository": {
+    "url": "https://github.com/OrtaMarco/mx-fiscal-mcp-server",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "mx-fiscal-mcp-server",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

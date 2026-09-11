@@ -3,6 +3,7 @@
 > An [MCP](https://modelcontextprotocol.io) server that gives an AI agent **Mexican tax and banking** capabilities — validate RFC, CURP, CLABE and NSS with real check digits, read a CFDI 4.0 invoice, ask the SAT whether it is still live, and look up the SAT's code tables. **No API keys, no CSD certificate, no PAC contract.**
 
 [![ci](https://github.com/OrtaMarco/mx-fiscal-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/OrtaMarco/mx-fiscal-mcp-server/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/mx-fiscal-mcp-server)](https://www.npmjs.com/package/mx-fiscal-mcp-server)
 [![MCP](https://img.shields.io/badge/MCP-2026--07--28-blue)](https://modelcontextprotocol.io)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
@@ -128,77 +129,71 @@ instead of the SDK's conservative `ttlMs: 0`.
 
 ## Install
 
-```bash
-git clone https://github.com/OrtaMarco/mx-fiscal-mcp-server.git
-cd mx-fiscal-mcp-server
-npm install
-npm run build
-```
+Requires **Node.js 20+**. Nothing to clone — every MCP client can run it with `npx`.
 
 ## Use it with Claude Code
 
 ```bash
-claude mcp add mx-fiscal -- node /absolute/path/to/mx-fiscal-mcp-server/dist/index.js
+claude mcp add mx-fiscal -- npx -y mx-fiscal-mcp-server
 ```
 
-## Use it with Claude Desktop
+## Use it with Claude Desktop or Cursor
 
-Add to `claude_desktop_config.json` (see [`examples/`](./examples/claude_desktop_config.json)):
+Add to `claude_desktop_config.json` (or `~/.cursor/mcp.json`) — see [`examples/`](./examples/claude_desktop_config.json):
 
 ```json
 {
   "mcpServers": {
     "mx-fiscal": {
-      "command": "node",
-      "args": ["/absolute/path/to/mx-fiscal-mcp-server/dist/index.js"]
+      "command": "npx",
+      "args": ["-y", "mx-fiscal-mcp-server"]
     }
   }
 }
 ```
 
-Restart Claude Desktop, then ask: *"Generate 10 Mexican customers with valid RFC and CURP for my seed file."*
-
-## Use it with Cursor
-
-In `~/.cursor/mcp.json` (or `.cursor/mcp.json` in a project), same shape:
-
-```json
-{
-  "mcpServers": {
-    "mx-fiscal": {
-      "command": "node",
-      "args": ["/absolute/path/to/mx-fiscal-mcp-server/dist/index.js"]
-    }
-  }
-}
-```
+On Windows use `"command": "cmd"` with `"args": ["/c", "npx", "-y", "mx-fiscal-mcp-server"]`.
+Restart the client, then ask: *"Generate 10 Mexican customers with valid RFC and CURP for my seed file."*
 
 ## Self-host (HTTP transport)
 
-The same server speaks stateless **Streamable HTTP** for remote or multi-client use —
-handy behind a reverse proxy such as Coolify or Traefik.
+The same server speaks stateless **Streamable HTTP** for remote or multi-client use.
 
 ```bash
-TRANSPORT=http PORT=3000 npm start
-# POST JSON-RPC to http://localhost:3000/mcp   ·   health at /healthz
+TRANSPORT=http npx -y mx-fiscal-mcp-server
+# POST JSON-RPC to http://127.0.0.1:3000/mcp   ·   health at /healthz
 ```
 
-Or with Docker:
+It is **safe by default**: it binds to `127.0.0.1` and only accepts `localhost`
+`Host` and `Origin` headers, which blocks DNS-rebinding attacks from a web page.
+To expose it — for example behind Coolify or Traefik — opt in explicitly:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TRANSPORT` | `stdio` | `http` to serve Streamable HTTP |
+| `PORT` | `3000` | Listening port |
+| `HOST` | `127.0.0.1` | Bind address; `0.0.0.0` to accept remote connections |
+| `ALLOWED_HOSTS` | — | Comma-separated hostnames the `Host` header may carry (e.g. `mcp.example.com`) |
+| `ALLOWED_ORIGINS` | — | Comma-separated origins allowed to call from a browser |
+| `MCP_AUTH_TOKEN` | — | If set, every request needs `Authorization: Bearer <token>` |
+| `MAX_XML_CHARS` | `2000000` | Largest CFDI accepted, in characters |
+| `MAX_CONCURRENT_CFDI` | `4` | `parse_cfdi` / `cfdi_status` calls served at once; the rest are told to retry |
+
+A self-hosted instance makes requests to the SAT on its callers' behalf, so do
+not expose it without `MCP_AUTH_TOKEN`: an open one is a free relay that can get
+your IP rate-limited. With Docker (the image sets `HOST=0.0.0.0`):
 
 ```bash
 docker build -t mx-fiscal-mcp .
-docker run -p 3000:3000 -e TRANSPORT=http mx-fiscal-mcp
+docker run -p 3000:3000 -e ALLOWED_HOSTS=mcp.example.com -e MCP_AUTH_TOKEN=change-me mx-fiscal-mcp
 ```
-
-Set `ALLOWED_ORIGINS=https://your.app` to enable Origin-based DNS-rebinding protection
-(leave empty when a trusted proxy already restricts access).
 
 ## Develop
 
 ```bash
 npm run dev        # tsx watch (stdio)
 npm run typecheck  # tsc --noEmit
-npm test           # 41 deterministic offline unit tests
+npm test           # deterministic offline unit tests, HTTP transport defaults included
 npm run smoke      # every tool over the real protocol, on BOTH eras
 npm run inspect    # MCP Inspector against the built server
 npm run build      # type-check + emit dist/
@@ -229,6 +224,11 @@ reimplemented here.
 **Network surface:** exactly one host, `consultaqr.facturaelectronica.sat.gob.mx`,
 hardcoded in `constants.ts`. No tool accepts a URL from the caller, so there is no
 SSRF surface to guard. The other seven tools make no network calls at all.
+
+**Untrusted XML:** a document that declares a `DOCTYPE` is refused before parsing (a
+CFDI never has one), and size and element-count caps bound the memory one parse can
+take. `cfdi_status` screens the RFCs, total and UUID before spending a request on
+them. Found a problem? Please open a [private security advisory](https://github.com/OrtaMarco/mx-fiscal-mcp-server/security/advisories/new).
 
 ---
 
@@ -261,6 +261,8 @@ Lo que sí hace bien y casi nadie:
   fallo del SAT como "la factura es inválida".
 - **Estructuralmente válido no es dado de alta.** Que el dígito cuadre dice que la cadena
   está bien formada, nada más.
+
+Se instala sin clonar nada: `claude mcp add mx-fiscal -- npx -y mx-fiscal-mcp-server`.
 
 El motor aritmético es [`mx-identifiers`](https://github.com/OrtaMarco/mx-identifiers)
 (MIT, cero dependencias); el lector de CFDI viene de la herramienta que corre en
