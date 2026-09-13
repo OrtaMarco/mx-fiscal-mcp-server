@@ -161,7 +161,14 @@ export type CancellationState =
   | "en_proceso"
   | "solicitud_rechazada"
   | "ninguno";
+/** Whether the ISSUER is on the definitive 69-B (EFOS) list. */
 export type EfosState = "not_listed" | "listed" | "unknown";
+/**
+ * Whether a third-party RFC the invoice was issued on behalf of (*a cuenta de
+ * terceros*) is on the list. `not_reported` is for the codes (100 and 200) whose
+ * documented meaning speaks of the issuer alone.
+ */
+export type EfosThirdPartyState = "listed" | "not_listed" | "not_reported" | "unknown";
 
 export interface SatStatusReading {
   codigo_estatus: string;
@@ -177,6 +184,7 @@ export interface SatStatusReading {
   cancellation_meaning: string;
   validacion_efos: string;
   efos_state: EfosState;
+  efos_third_party_state: EfosThirdPartyState;
   efos_meaning: string;
   raw: Record<string, string>;
 }
@@ -206,6 +214,86 @@ const CANCELLATION_MEANING: Record<CancellationState, string> = {
   solicitud_rechazada: "The receiver rejected the cancellation request, so the invoice is still live.",
   ninguno: "No cancellation process has been started for this invoice.",
 };
+
+/**
+ * The `ValidacionEFOS` code table, as the SAT documents it in «Documentación del
+ * Servicio de Consulta de CFDI» v1.4 (November 2022), section 3, «Mensajes de
+ * validación del RFC Emisor»:
+ *   100 — the issuer is on the EFOS list.
+ *   101 — the issuer is on it, and so is a third-party RFC (a cuenta de terceros).
+ *   102 — the issuer is NOT on it, but the third-party RFC is.
+ *   103 — the issuer is NOT on it, but one of several third-party RFCs is.
+ *   104 — the issuer is on it, and so is one of several third-party RFCs.
+ *   200 — the issuer is NOT on it.
+ *   201 — neither the issuer nor any third-party RFC is on it.
+ */
+export const EFOS_DOC_REFERENCE =
+  "SAT, «Documentación del Servicio de Consulta de CFDI» v1.4, section 3 (http://omawww.sat.gob.mx/tramitesyservicios/Paginas/documentos/Documentacion_WS_Consulta_CFDI_v1.4.pdf)";
+
+const LIST_69B = "the SAT's definitive list of companies that invoice simulated operations (EFOS, article 69-B of the CFF)";
+const RECEIVER_WINDOW =
+  "Per the SAT, a receiver who gave this invoice tax effects has 30 days from the list's publication date to prove the operations were real before the SAT, or to file amended returns that drop the invoice.";
+
+const EFOS_CODES: Record<string, { issuer: EfosState; thirdParty: EfosThirdPartyState; text: string }> = {
+  "100": { issuer: "listed", thirdParty: "not_reported", text: `the issuer IS on ${LIST_69B}. ${RECEIVER_WINDOW}` },
+  "101": {
+    issuer: "listed",
+    thirdParty: "listed",
+    text: `the issuer IS on ${LIST_69B}, and so is a third-party RFC the invoice was issued on behalf of (a cuenta de terceros). ${RECEIVER_WINDOW}`,
+  },
+  "102": {
+    issuer: "not_listed",
+    thirdParty: "listed",
+    text: `the issuer is NOT on ${LIST_69B}, but the third-party RFC the invoice was issued on behalf of (a cuenta de terceros) IS. ${RECEIVER_WINDOW}`,
+  },
+  "103": {
+    issuer: "not_listed",
+    thirdParty: "listed",
+    text: `the issuer is NOT on ${LIST_69B}, but one of the several third-party RFCs the invoice was issued on behalf of (a cuenta de terceros) IS. ${RECEIVER_WINDOW}`,
+  },
+  "104": {
+    issuer: "listed",
+    thirdParty: "listed",
+    text: `the issuer IS on ${LIST_69B}, and so is one of the several third-party RFCs the invoice was issued on behalf of (a cuenta de terceros). ${RECEIVER_WINDOW}`,
+  },
+  "200": { issuer: "not_listed", thirdParty: "not_reported", text: `the issuer is NOT on ${LIST_69B}.` },
+  "201": {
+    issuer: "not_listed",
+    thirdParty: "not_listed",
+    text: `neither the issuer nor any of the third-party RFCs the invoice was issued on behalf of (a cuenta de terceros) is on ${LIST_69B}.`,
+  },
+};
+
+/** Map a raw `ValidacionEFOS` value onto the issuer and third-party states. */
+export function interpretEfos(raw: string): {
+  efos_state: EfosState;
+  efos_third_party_state: EfosThirdPartyState;
+  efos_meaning: string;
+} {
+  const code = raw.trim();
+  // An empty field is NOT evidence of anything — the SAT returns it blank on a
+  // 'No Encontrado'.
+  if (!code) {
+    return {
+      efos_state: "unknown",
+      efos_third_party_state: "unknown",
+      efos_meaning: "The service returned no EFOS field for this query (it comes back blank when the invoice is not found).",
+    };
+  }
+  const known = Object.hasOwn(EFOS_CODES, code) ? EFOS_CODES[code] : undefined;
+  if (!known) {
+    return {
+      efos_state: "unknown",
+      efos_third_party_state: "unknown",
+      efos_meaning: `EFOS check returned '${code}', which is not one of the codes the SAT documents (100-104, 200, 201). It is reported as unknown rather than guessed at; check the published 69-B list directly. Source for the code table: ${EFOS_DOC_REFERENCE}.`,
+    };
+  }
+  return {
+    efos_state: known.issuer,
+    efos_third_party_state: known.thirdParty,
+    efos_meaning: `EFOS check returned ${code}: ${known.text} Source: ${EFOS_DOC_REFERENCE}.`,
+  };
+}
 
 /** Map the service's Spanish strings onto stable states. */
 export function interpret(values: Record<string, string>): SatStatusReading {
@@ -244,12 +332,7 @@ export function interpret(values: Record<string, string>): SatStatusReading {
               ? "solicitud_rechazada"
               : "ninguno";
 
-  // 200/201 mean the issuer is NOT on the definitive 69-B (EFOS) list. The SAT
-  // does not publish the code table; this mapping is the one phpcfdi and
-  // nodecfdi both use, and it is reported as an interpretation, not a fact.
-  // An empty field is NOT evidence of anything — the SAT returns it blank on a
-  // 'No Encontrado', and the field itself only exists since late 2020.
-  const efosState: EfosState = !efos ? "unknown" : efos === "200" || efos === "201" ? "not_listed" : "listed";
+  const efosReading = interpretEfos(efos);
 
   return {
     codigo_estatus: codigo,
@@ -264,12 +347,7 @@ export function interpret(values: Record<string, string>): SatStatusReading {
     cancellation_state: cancellationState,
     cancellation_meaning: CANCELLATION_MEANING[cancellationState],
     validacion_efos: efos,
-    efos_state: efosState,
-    efos_meaning: efos
-      ? efosState === "not_listed"
-        ? `EFOS check returned ${efos}: the issuer is NOT on the SAT's definitive 69-B list of companies that invoice simulated operations.`
-        : `EFOS check returned ${efos}, which is neither 200 nor 201 — under the mapping phpcfdi and nodecfdi use, that means the issuer IS on the SAT's definitive 69-B list. Verify against the published 69-B list before acting on it: the SAT documents neither the code table nor this field.`
-      : "The service returned no EFOS field for this query (the field was added in late 2020 and is not always populated).",
+    ...efosReading,
     raw: values,
   };
 }
@@ -354,8 +432,10 @@ export async function queryCfdiStatus(input: {
             "'No Encontrado' most often means the total was formatted differently from the way the SAT stores it, or the UUID was mistyped — not that the invoice is fake. Re-derive the four values from the XML (pass `xml` instead of the four fields) before concluding anything.",
         });
       }
-      if (status.efos_state === "listed" && status.validacion_efos) {
+      if (status.efos_state === "listed" || status.efos_third_party_state === "listed") {
         findings.push({ severity: "warn", message: status.efos_meaning });
+      } else if (status.efos_state === "unknown" && status.validacion_efos.trim()) {
+        findings.push({ severity: "info", message: status.efos_meaning });
       }
       findings.push({
         severity: "info",

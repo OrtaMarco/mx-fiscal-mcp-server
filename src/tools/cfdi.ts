@@ -146,7 +146,7 @@ What comes back, each with its meaning spelled out:
   - **Estado** — Vigente / Cancelado / No Encontrado.
   - **EsCancelable** — whether the issuer can cancel it unilaterally, needs the receiver's approval, or cannot cancel it at all.
   - **EstatusCancelacion** — whether a cancellation is in progress, was accepted, was rejected, or lapsed.
-  - **ValidacionEFOS** — whether the issuer appears on the SAT's definitive 69-B list of companies that invoice simulated operations.
+  - **ValidacionEFOS** — whether the issuer, and any third-party RFC the invoice was issued on behalf of (*a cuenta de terceros*), appears on the SAT's definitive 69-B list of companies that invoice simulated operations. Read with the code table the SAT documents (service documentation v1.4, section 3): 100, 101 and 104 put the issuer on the list; 102 and 103 mean the issuer is NOT on it but a third-party RFC is; 200 and 201 mean the issuer is not on it (201: nor any third party). \`efos_state\` speaks of the issuer only and \`efos_third_party_state\` of the third parties; an empty field or an undocumented code is \`unknown\`, with the raw code kept in \`validacion_efos\`.
   - **CodigoEstatus** — the service's own result code.
 
 **Fail-soft by design.** The SAT publishes no rate limit, no SLA and no status page, and the endpoint does go down. On timeout, refusal or a malformed answer this returns \`available: false\` with the reason instead of raising — a failed lookup is a statement about the SAT, never about the invoice. Never report a document as invalid on the strength of an unreachable service. One retry, 10-second timeout.
@@ -155,7 +155,7 @@ Args (either shape):
   - xml (string), OR rfc_emisor + rfc_receptor + total + uuid (all strings).
   - response_format ('markdown' | 'json'): output format (default 'markdown').
 
-Returns: { available, unavailable_reason, endpoint, expression, attempts, elapsed_ms, source, status{codigo_estatus, query_outcome, estado, document_state, document_meaning, es_cancelable, cancellable_state, cancellable_meaning, estatus_cancelacion, cancellation_state, cancellation_meaning, validacion_efos, efos_state, efos_meaning, raw} | null, findings[] }.
+Returns: { available, unavailable_reason, endpoint, expression, attempts, elapsed_ms, source, status{codigo_estatus, query_outcome, estado, document_state, document_meaning, es_cancelable, cancellable_state, cancellable_meaning, estatus_cancelacion, cancellation_state, cancellation_meaning, validacion_efos, efos_state, efos_third_party_state, efos_meaning, raw} | null, findings[] }.
 
 Example: "Is this invoice still valid?" -> cfdi_status(xml="<cfdi:Comprobante …>").`,
       inputSchema: z.object({

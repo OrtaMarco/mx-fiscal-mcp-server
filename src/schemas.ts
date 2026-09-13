@@ -267,6 +267,7 @@ export const CfdiStatusSchema = z.object({
       cancellation_meaning: z.string(),
       validacion_efos: z.string(),
       efos_state: z.enum(["not_listed", "listed", "unknown"]),
+      efos_third_party_state: z.enum(["listed", "not_listed", "not_reported", "unknown"]),
       efos_meaning: z.string(),
       raw: z.record(z.string(), z.string()),
     })

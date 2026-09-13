@@ -108,10 +108,16 @@ These are surfaced in the tool output, not buried here:
   not the full catalogue; an unknown code is reported as unknown rather than given an
   invented name. The plaza catalogue is not bundled at all, so the plaza code is
   returned verbatim.
-- **The EFOS mapping is an interpretation.** The SAT documents neither the
-  `ValidacionEFOS` code table nor the field itself. `200`/`201` meaning "not on the
-  69-B list" is the mapping `phpcfdi` and `nodecfdi` both use, and it is labelled as
-  such. An empty field is reported as `unknown`, never as "listed".
+- **EFOS codes are read from the SAT's own table.** The SAT documents `ValidacionEFOS`
+  in its [*Documentación del Servicio de Consulta de CFDI* v1.4](http://omawww.sat.gob.mx/tramitesyservicios/Paginas/documentos/Documentacion_WS_Consulta_CFDI_v1.4.pdf),
+  section 3: `100`, `101` and `104` put the **issuer** on the definitive 69-B list;
+  `102` and `103` mean the issuer is **not** on it but a third-party RFC the invoice was
+  issued on behalf of (*a cuenta de terceros*) is; `200` and `201` mean the issuer is not
+  on it (`201`: nor any third party). `efos_state` speaks of the issuer only, and
+  `efos_third_party_state` (`listed` / `not_listed` / `not_reported` / `unknown`) of the
+  third parties. An empty field or an undocumented code is reported as `unknown` with
+  the raw code kept in `validacion_efos`, never as "listed". Versions up to 1.0.1
+  reported `102` and `103` as an issuer on the list; 1.0.2 fixes it.
 
 ## Protocol
 

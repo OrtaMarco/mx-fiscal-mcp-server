@@ -26,6 +26,7 @@ import {
   extractConsultaResult,
   formatExpressionTotal,
   interpret,
+  queryCfdiStatus,
 } from "../dist/core/sat.js";
 import { lookupCatalog, CATALOG_NAMES } from "../dist/core/catalogs.js";
 import { reportClabe, reportCurp, reportNss, reportRfc } from "../dist/core/identifiers.js";
@@ -232,9 +233,37 @@ test("a missing invoice is interpreted as no_encontrado", () => {
   assert.equal(reading.efos_state, "unknown");
 });
 
-test("an EFOS code that is neither 200 nor 201 means listed", () => {
-  assert.equal(interpret({ ValidacionEFOS: "100" }).efos_state, "listed");
-  assert.equal(interpret({ ValidacionEFOS: "201" }).efos_state, "not_listed");
+// The table in «Documentación del Servicio de Consulta de CFDI» v1.4, section 3.
+const EFOS_TABLE = [
+  // code, issuer, third parties, what the meaning must say
+  ["100", "listed", "not_reported", /the issuer IS on/],
+  ["101", "listed", "listed", /the issuer IS on .*and so is a third-party RFC/],
+  ["102", "not_listed", "listed", /the issuer is NOT on .*but the third-party RFC .* IS/],
+  ["103", "not_listed", "listed", /the issuer is NOT on .*but one of the several third-party RFCs .* IS/],
+  ["104", "listed", "listed", /the issuer IS on .*and so is one of the several third-party RFCs/],
+  ["200", "not_listed", "not_reported", /the issuer is NOT on/],
+  ["201", "not_listed", "not_listed", /neither the issuer nor any of the third-party RFCs/],
+];
+
+for (const [code, issuer, thirdParty, meaning] of EFOS_TABLE) {
+  test(`EFOS code ${code} → issuer ${issuer}, third parties ${thirdParty}`, () => {
+    const reading = interpret({ ValidacionEFOS: code });
+    assert.equal(reading.validacion_efos, code);
+    assert.equal(reading.efos_state, issuer);
+    assert.equal(reading.efos_third_party_state, thirdParty);
+    assert.match(reading.efos_meaning, meaning);
+    assert.match(reading.efos_meaning, /Documentación del Servicio de Consulta de CFDI» v1\.4/);
+  });
+}
+
+test("102 and 103 never put the issuer on the 69-B list", () => {
+  // 1.0.1 read every code other than 200/201 as "the issuer is listed", which
+  // accused issuers the SAT explicitly says are NOT on the list.
+  for (const code of ["102", "103"]) {
+    const reading = interpret({ ValidacionEFOS: code });
+    assert.notEqual(reading.efos_state, "listed");
+    assert.doesNotMatch(reading.efos_meaning, /the issuer IS on/);
+  }
 });
 
 test("an empty EFOS field is 'unknown', never 'listed'", () => {
@@ -242,7 +271,51 @@ test("an empty EFOS field is 'unknown', never 'listed'", () => {
   // is on the 69-B list" would be a serious accusation drawn from silence.
   const reading = interpret({ Estado: "No Encontrado", ValidacionEFOS: "" });
   assert.equal(reading.efos_state, "unknown");
+  assert.equal(reading.efos_third_party_state, "unknown");
   assert.ok(/no EFOS field/.test(reading.efos_meaning));
+  assert.equal(interpret({}).efos_state, "unknown");
+});
+
+test("an undocumented EFOS code is 'unknown' and keeps the raw code", () => {
+  for (const code of ["105", "300", "abc", "toString"]) {
+    const reading = interpret({ ValidacionEFOS: code });
+    assert.equal(reading.validacion_efos, code);
+    assert.equal(reading.efos_state, "unknown");
+    assert.equal(reading.efos_third_party_state, "unknown");
+    assert.ok(reading.efos_meaning.includes(`'${code}'`));
+    assert.match(reading.efos_meaning, /not one of the codes the SAT documents/);
+  }
+});
+
+test("cfdi_status findings warn on a listed issuer or third party, and only then", async () => {
+  const realFetch = globalThis.fetch;
+  const answer = (efos) =>
+    `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>` +
+    `<ConsultaResponse xmlns="http://tempuri.org/"><ConsultaResult xmlns:a="http://schemas.datacontract.org/2004/07/Sat.Cfdi.Negocio.ConsultaCfdi.Servicio">` +
+    `<a:CodigoEstatus>S - Comprobante obtenido satisfactoriamente.</a:CodigoEstatus><a:Estado>Vigente</a:Estado>` +
+    `<a:ValidacionEFOS>${efos}</a:ValidacionEFOS></ConsultaResult></ConsultaResponse></s:Body></s:Envelope>`;
+  const query = {
+    rfc_emisor: "TES150312DX2",
+    rfc_receptor: "PELJ900521DK2",
+    total: "1160.00",
+    uuid: "5A7B3C1D-9E2F-4A6B-8C0D-1E2F3A4B5C6D",
+  };
+  try {
+    const expectations = { 100: true, 101: true, 102: true, 103: true, 104: true, 200: false, 201: false };
+    for (const [code, warns] of Object.entries(expectations)) {
+      globalThis.fetch = async () => new Response(answer(code), { status: 200 });
+      const result = await queryCfdiStatus(query);
+      assert.equal(result.available, true);
+      const efosWarning = result.findings.some((f) => f.severity === "warn" && /^EFOS check returned/.test(f.message));
+      assert.equal(efosWarning, warns, `code ${code}`);
+    }
+    globalThis.fetch = async () => new Response(answer("999"), { status: 200 });
+    const odd = await queryCfdiStatus(query);
+    assert.ok(odd.findings.some((f) => f.severity === "info" && /'999'/.test(f.message)));
+    assert.ok(!odd.findings.some((f) => f.severity === "warn" && /EFOS/.test(f.message)));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 test("the late-2020 alternative spelling of the EFOS field is read too", () => {
