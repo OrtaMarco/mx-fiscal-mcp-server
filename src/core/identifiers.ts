@@ -62,7 +62,7 @@ const ERROR_TEXT: Record<string, Record<string, string>> = {
     digits: "A CLABE contains digits only.",
     length: "A CLABE is exactly 18 digits: 3 bank + 3 plaza + 11 account + 1 control.",
     checksum:
-      "The control digit does not match. Note the algorithm reduces each weighted product modulo 10 BEFORE summing — implementations that sum first (Luhn-style) get this wrong.",
+      "The control digit does not match. Note each 3-7-1 weighted product counts only its last digit (9 × 7 = 63 counts 3) — implementations that add the product's digits Luhn-style (6 + 3 = 9) compute a different control digit.",
   },
   nss: {
     empty: "The input is empty once separators and spaces are stripped.",

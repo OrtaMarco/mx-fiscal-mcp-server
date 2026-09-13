@@ -3,9 +3,12 @@
  *
  * This is the same web service the QR code on every printed Mexican invoice
  * points at, so it needs no credentials, no CSD and no PAC contract. What it
- * does need is care: the SAT publishes no rate limit, no SLA and no uptime
- * page, and the endpoint goes down. Every failure path here degrades to
- * `available: false` with a reason — a tool that throws would make an agent
+ * does need is care: the SAT publishes no SLA and no uptime page, and the
+ * endpoint goes down. Its service documentation («Documentación del Servicio de
+ * Consulta de CFDI» v1.4, section 5) states capacity for up to 2 million
+ * queries per hour and, because every query reads the SAT's transactional
+ * databases, asks callers not to raise their query volume. Every failure path
+ * here degrades to `available: false` with a reason — a tool that throws would make an agent
  * report "the invoice is invalid" when the truth is "the SAT did not answer".
  *
  * The envelope, the SOAPAction and the result element name were read from
@@ -429,7 +432,7 @@ export async function queryCfdiStatus(input: {
         findings.push({
           severity: "info",
           message:
-            "'No Encontrado' most often means the total was formatted differently from the way the SAT stores it, or the UUID was mistyped — not that the invoice is fake. Re-derive the four values from the XML (pass `xml` instead of the four fields) before concluding anything.",
+            "'No Encontrado' does not by itself mean the invoice is fake: a total written in a format other than the printed-representation one (six decimals, trailing zeros trimmed) can come back 'No Encontrado', and so can a mistyped UUID or RFC. Re-derive the four values from the XML (pass `xml` instead of the four fields) before concluding anything.",
         });
       }
       if (status.efos_state === "listed" || status.efos_third_party_state === "listed") {
@@ -440,7 +443,7 @@ export async function queryCfdiStatus(input: {
       findings.push({
         severity: "info",
         message:
-          "The SAT publishes no rate limit and no SLA for this endpoint. Query it once per invoice, cache the answer, and never put it in a hot loop.",
+          "The SAT publishes no SLA for this endpoint. Its documentation states capacity for up to 2 million queries per hour and asks callers not to raise their query volume, because every query reads its transactional databases. Query once per invoice, cache the answer, and never put it in a hot loop.",
       });
 
       return {

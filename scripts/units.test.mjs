@@ -454,6 +454,16 @@ test("an unknown CLABE bank code is warned about, never given a name", () => {
   assert.ok(report.findings.some((f) => f.severity === "warn" && /not in the bundled/.test(f.message)));
 });
 
+test("the CLABE control digit keeps each product's last digit, not its Luhn-style digit sum", () => {
+  // 0·3 + 9·7 = 63 → counts 3 → control digit 7. Adding 6 + 3 = 9 would give 1.
+  // The example the README and the tool description quote.
+  assert.equal(clabeCheckDigit("09000000000000000"), "7");
+  const report = reportClabe("090000000000000001");
+  assert.equal(report.valid, false);
+  assert.equal(report.expected_check_digit, "7");
+  assert.ok(report.errors.some((e) => e.code === "checksum" && /63 counts 3/.test(e.message)));
+});
+
 test("the NSS report explains the Luhn failure", () => {
   // The Luhn digit over 9211962472 is 1, so 0 is wrong on purpose.
   const report = reportNss("92119624720");

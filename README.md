@@ -50,7 +50,7 @@ check digit. This server is the read half, done carefully.
 
 The arithmetic comes from [`mx-identifiers`](https://github.com/OrtaMarco/mx-identifiers)
 (MIT, zero dependencies, 101 tests against public vectors); the CFDI reader is ported
-from the tool running at [ortamarco.me](https://ortamarco.me/herramientas/lector-cfdi/);
+from the tool running at [ortamarco.me](https://ortamarco.me/en/tools/cfdi-viewer/);
 the SOAP envelope was read out of [`nodecfdi/sat-estado-cfdi`](https://github.com/nodecfdi/sat-estado-cfdi)
 rather than guessed. It is the third of three read-only, key-free MCP servers alongside
 [`domain-security-mcp-server`](https://github.com/OrtaMarco/domain-security-mcp-server)
@@ -64,7 +64,7 @@ and [`seo-geo-mcp-server`](https://github.com/OrtaMarco/seo-geo-mcp-server).
 |---|---|
 | `validate_rfc` | RFC for individuals (13 chars) and companies (12), full modulus-11 check digit, parsed fields, birth/incorporation date. Flags the SAT generics and says which of them satisfies the arithmetic |
 | `validate_curp` | 18-character CURP with the base-37 check digit; decodes birth date, sex, state (RENAPO keys, *not* INEGI/ISO) and the century marker |
-| `validate_clabe` | 18-digit CLABE with the correct 3-7-1 control digit — each product reduced modulo 10 **before** summing, which is the step most implementations skip — plus the Banxico bank and the plaza code |
+| `validate_clabe` | 18-digit CLABE with the correct 3-7-1 control digit — each weighted product counts only its **last digit** (`9 × 7 = 63` counts `3`), not the Luhn-style sum of its digits (`6 + 3 = 9`) many implementations copy — plus the Banxico bank and the plaza code |
 | `validate_nss` | 11-digit IMSS number with its Luhn digit, split into subdelegación / registration year / birth year / serial |
 | `generate_test_data` ⭐ | 1-100 coherent fake people or companies: the RFC and CURP derive from the same name and birth date, the CLABE's bank is a real participant, every check digit holds |
 
@@ -101,7 +101,9 @@ These are surfaced in the tool output, not buried here:
 - **Reading a CFDI is not verifying it.** `parse_cfdi` does not check the digital
   signature. A perfectly parseable invoice can be cancelled, or fabricated wholesale.
 - **An unreachable SAT is not an invalid invoice.** The status endpoint publishes no
-  rate limit, no SLA and no status page, and it goes down. `cfdi_status` degrades to
+  SLA and no status page, and it goes down. Its documentation states capacity for up to
+  2 million queries per hour and asks callers not to raise their query volume, since
+  every query reads the SAT's transactional databases. `cfdi_status` degrades to
   `available: false` with the reason — a statement about the SAT, never about the
   document.
 - **The bank list is a subset.** `bancos_clabe` carries the main Banxico participants,
@@ -257,12 +259,16 @@ Lo que sí hace bien y casi nadie:
   en el extranjero) sí lo satisface. Por eso tantos formularios rechazan las facturas al
   público en general. Las tools devuelven `is_generic` y `check_digit_satisfied` por
   separado.
-- **El dígito de control de la CLABE reduce cada producto módulo 10 *antes* de sumar.**
-  Las implementaciones que suman primero, al estilo Luhn, aceptan y rechazan cuentas
-  equivocadas.
+- **El dígito de control de la CLABE se queda con la última cifra de cada producto
+  ponderado 3-7-1, no con la suma de sus cifras.** De `9 × 7 = 63` cuenta el `3`; las
+  implementaciones que copian a Luhn suman `6 + 3 = 9` y sacan otro dígito: para la base
+  `09000000000000000` el algoritmo da `7` y el estilo Luhn da `1`. Reducir módulo 10 antes
+  o después de sumar da lo mismo; el error no está ahí.
 - **Las claves de entidad de la CURP son de RENAPO**, no de INEGI ni ISO 3166-2:MX.
   `DF` es Ciudad de México, `MC` es Estado de México, `NE` es nacido en el extranjero.
-- **El servicio del SAT se cae y no publica límite de tasa.** `cfdi_status` degrada a
+- **El servicio del SAT se cae y no publica SLA.** Su documentación declara capacidad
+  para hasta 2 millones de consultas por hora y pide no aumentar el volumen de consultas,
+  porque cada una toca sus bases de datos transaccionales. `cfdi_status` degrada a
   `available: false` con el motivo; nunca lanza una excepción, y nunca hay que leer un
   fallo del SAT como "la factura es inválida".
 - **Estructuralmente válido no es dado de alta.** Que el dígito cuadre dice que la cadena
@@ -272,7 +278,7 @@ Se instala sin clonar nada: `claude mcp add mx-fiscal -- npx -y mx-fiscal-mcp-se
 
 El motor aritmético es [`mx-identifiers`](https://github.com/OrtaMarco/mx-identifiers)
 (MIT, cero dependencias); el lector de CFDI viene de la herramienta que corre en
-[ortamarco.me](https://ortamarco.me/herramientas/lector-cfdi/); el sobre SOAP se leyó
+[ortamarco.me](https://ortamarco.me/herramientas/visor-cfdi/); el sobre SOAP se leyó
 del código de [`nodecfdi/sat-estado-cfdi`](https://github.com/nodecfdi/sat-estado-cfdi),
 no se inventó.
 

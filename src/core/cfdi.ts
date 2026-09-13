@@ -2,7 +2,7 @@
  * CFDI 4.0 reader.
  *
  * `parseCfdi()` below is a 1:1 port of the browser tool that ships at
- * https://ortamarco.me/herramientas/lector-cfdi/ (src/components/tools/data/CfdiViewer.tsx).
+ * https://ortamarco.me/herramientas/visor-cfdi/ (src/components/tools/data/CfdiViewer.tsx).
  * It walks the document by `localName`, so it never depends on the `cfdi:` /
  * `tfd:` prefixes actually used by the PAC that stamped the invoice — some
  * stamp with no prefix at all, some with their own. `@xmldom/xmldom` supplies

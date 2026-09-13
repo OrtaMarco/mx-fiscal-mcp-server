@@ -18,7 +18,7 @@ const INSTRUCTIONS = `Mexican tax and banking toolkit. Every tool is read-only a
 Guidance:
 - Identifier questions: \`validate_rfc\`, \`validate_curp\`, \`validate_clabe\`, \`validate_nss\`. Each returns the normalised value, the parsed fields and a legible reason for every failure.
 - Fixtures, seeds and demos: \`generate_test_data\`. Its output satisfies every check digit and is generated, not taken from real records (a value can still coincide with a real one by chance).
-- An invoice XML in hand: \`parse_cfdi\` reads it (labels every catalogue code, validates both RFCs, checks the arithmetic); \`cfdi_status\` asks the SAT whether it is still live. Prefer passing the whole \`xml\` to \`cfdi_status\` over typing the four fields — a mis-formatted total is the commonest cause of a false 'No Encontrado'.
+- An invoice XML in hand: \`parse_cfdi\` reads it (labels every catalogue code, validates both RFCs, checks the arithmetic); \`cfdi_status\` asks the SAT whether it is still live. Prefer passing the whole \`xml\` to \`cfdi_status\` over typing the four fields — the total has to match the printed-representation format, and a total written in another format, or any mistyped value, can come back as a false 'No Encontrado'.
 - Code tables: \`sat_catalog_lookup\` covers régimen fiscal, uso CFDI, forma and método de pago, tipo de comprobante, objeto de impuesto, impuestos, CLABE banks and CURP states.
 
 Four distinctions worth carrying into your answers:
@@ -26,7 +26,7 @@ Four distinctions worth carrying into your answers:
 1. **Structurally valid is not registered.** A check digit that adds up says the string is well-formed, nothing more. Only the SAT can say an RFC is registered, only RENAPO that a CURP belongs to someone. This server never asks either, and neither should your wording.
 2. **XAXX010101000 does not satisfy its own check digit.** The SAT assigned the general-public RFC by decree and the modulus-11 algorithm disagrees with it. XEXX010101000 (foreign residents) does satisfy it. Say which case you are in rather than "it's valid".
 3. **Reading a CFDI is not verifying it.** \`parse_cfdi\` reads what the XML says; it does not check the digital signature. A perfectly parseable invoice can be cancelled, or invented outright.
-4. **An unreachable SAT is not an invalid invoice.** \`cfdi_status\` returns \`available: false\` when the service times out or refuses. That is a statement about the SAT, which publishes no rate limit and no SLA for this endpoint. Report the check as not performed — never as a negative result.
+4. **An unreachable SAT is not an invalid invoice.** \`cfdi_status\` returns \`available: false\` when the service times out or refuses. That is a statement about the SAT, which publishes no SLA for this endpoint — its documentation states capacity for up to 2 million queries per hour and asks callers not to raise their query volume. Report the check as not performed — never as a negative result.
 
 This is the read half of Mexican electronic invoicing. Building and stamping a CFDI needs a CSD certificate and a PAC, and no tool here does it.
 

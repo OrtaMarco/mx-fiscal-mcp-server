@@ -139,7 +139,7 @@ Example: "Read this invoice and tell me who issued it and for how much" -> parse
       title: "CFDI Status at the SAT",
       description: `Ask the SAT whether an invoice actually exists and is still live. This queries the public \`ConsultaCFDIService\` SOAP endpoint — the same service the QR code printed on every Mexican invoice points at — so it needs **no credentials, no CSD and no PAC contract**.
 
-Pass either the four values the SAT keys on (issuer RFC, receiver RFC, total, UUID) or the whole \`xml\`, in which case they are derived from it with the same reader \`parse_cfdi\` uses. Deriving them from the XML is the more reliable route: the total must be formatted exactly the way the printed-representation spec demands (six decimals, trailing zeros trimmed), and a hand-typed total is the single most common cause of a spurious 'No Encontrado'.
+Pass either the four values the SAT keys on (issuer RFC, receiver RFC, total, UUID) or the whole \`xml\`, in which case they are derived from it with the same reader \`parse_cfdi\` uses. Deriving them from the XML is the more reliable route: the total must be formatted exactly the way the printed-representation spec demands (six decimals, trailing zeros trimmed), and a total written in another format can come back as a spurious 'No Encontrado'.
 
 What comes back, each with its meaning spelled out:
 
@@ -149,7 +149,7 @@ What comes back, each with its meaning spelled out:
   - **ValidacionEFOS** — whether the issuer, and any third-party RFC the invoice was issued on behalf of (*a cuenta de terceros*), appears on the SAT's definitive 69-B list of companies that invoice simulated operations. Read with the code table the SAT documents (service documentation v1.4, section 3): 100, 101 and 104 put the issuer on the list; 102 and 103 mean the issuer is NOT on it but a third-party RFC is; 200 and 201 mean the issuer is not on it (201: nor any third party). \`efos_state\` speaks of the issuer only and \`efos_third_party_state\` of the third parties; an empty field or an undocumented code is \`unknown\`, with the raw code kept in \`validacion_efos\`.
   - **CodigoEstatus** — the service's own result code.
 
-**Fail-soft by design.** The SAT publishes no rate limit, no SLA and no status page, and the endpoint does go down. On timeout, refusal or a malformed answer this returns \`available: false\` with the reason instead of raising — a failed lookup is a statement about the SAT, never about the invoice. Never report a document as invalid on the strength of an unreachable service. One retry, 10-second timeout.
+**Fail-soft by design.** The SAT publishes no SLA and no status page, and the endpoint does go down; its documentation states capacity for up to 2 million queries per hour and asks callers not to raise their query volume, so query once per invoice and cache the answer. On timeout, refusal or a malformed answer this returns \`available: false\` with the reason instead of raising — a failed lookup is a statement about the SAT, never about the invoice. Never report a document as invalid on the strength of an unreachable service. One retry, 10-second timeout.
 
 Args (either shape):
   - xml (string), OR rfc_emisor + rfc_receptor + total + uuid (all strings).

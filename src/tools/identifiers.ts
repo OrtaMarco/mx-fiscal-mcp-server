@@ -134,7 +134,7 @@ Example: "Decode BOXW310820HNERXN09" -> validate_curp(value="BOXW310820HNERXN09"
 
 Structure: 3 digits of bank + 3 of plaza (city/branch) + 11 of account + 1 control digit.
 
-**The control digit is the part everybody gets wrong.** The weights cycle 3-7-1, and each weighted product is reduced modulo 10 *before* being added to the sum. Implementations that sum the products first — the Luhn habit — accept and reject the wrong numbers. This uses the correct algorithm.
+**The control digit is the part everybody gets wrong.** The weights cycle 3-7-1, and each weighted product counts only its last digit (the product modulo 10): 9 × 7 = 63 counts as 3. Implementations that borrow the Luhn habit of adding the product's digits (6 + 3 = 9) compute a different control digit — for the base 09000000000000000 the algorithm gives 7 and the Luhn-style sum gives 1. (Reducing modulo 10 before or after summing gives the same result; that is not where they go wrong.) This uses the correct algorithm.
 
 The bank code is resolved against a curated subset of Banxico's participant catalogue. A code that is not in the subset is reported as unknown rather than given an invented name. The plaza code is reported verbatim: the full plaza catalogue is not bundled, so no city is guessed.
 
