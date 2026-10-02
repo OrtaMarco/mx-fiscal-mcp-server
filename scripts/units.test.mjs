@@ -454,6 +454,14 @@ test("an unknown CLABE bank code is warned about, never given a name", () => {
   assert.ok(report.findings.some((f) => f.severity === "warn" && /not in the bundled/.test(f.message)));
 });
 
+test("a Bineo CLABE (bank 165) is valid and named", () => {
+  const base = "16518012345678901";
+  const report = reportClabe(base + clabeCheckDigit(base));
+  assert.equal(report.valid, true);
+  assert.equal(report.bank_name, "Bineo");
+  assert.ok(!report.findings.some((f) => /not in the bundled/.test(f.message)));
+});
+
 test("the CLABE control digit keeps each product's last digit, not its Luhn-style digit sum", () => {
   // 0·3 + 9·7 = 63 → counts 3 → control digit 7. Adding 6 + 3 = 9 would give 1.
   // The example the README and the tool description quote.

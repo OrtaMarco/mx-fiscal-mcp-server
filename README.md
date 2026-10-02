@@ -120,6 +120,8 @@ These are surfaced in the tool output, not buried here:
   third parties. An empty field or an undocumented code is reported as `unknown` with
   the raw code kept in `validacion_efos`, never as "listed". Versions up to 1.0.1
   reported `102` and `103` as an issuer on the list; 1.0.2 fixes it.
+- **Bineo CLABEs (bank 165).** 1.0.3 requires `mx-identifiers` ^1.0.1, which carries
+  the fix for them.
 
 ## Protocol
 
