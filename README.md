@@ -72,8 +72,9 @@ and [`seo-geo-mcp-server`](https://github.com/OrtaMarco/seo-geo-mcp-server).
 
 | Tool | What it does |
 |---|---|
-| `parse_cfdi` ⭐ | CFDI 4.0 XML → JSON: header, issuer, receiver, every line item with transferred and withheld taxes, tax totals, and the Timbre Fiscal Digital (or `null`). Labels every catalogue code, validates both RFCs, checks the totals arithmetic. Walks the document by local name, so any PAC's namespace prefixes work |
-| `cfdi_status` ⭐ | Queries the SAT's public `ConsultaCFDIService` SOAP endpoint: Estado, EsCancelable, EstatusCancelación and ValidaciónEFOS, each with its meaning in plain words. Takes the four key fields **or** the whole XML. Fail-soft: 10 s timeout, one retry, `available: false` on failure — never an exception |
+| `parse_cfdi` ⭐ | CFDI XML → JSON: header, issuer, receiver, every line item with transferred and withheld taxes, tax totals, and the Timbre Fiscal Digital (or `null`). Labels every catalogue code, validates both RFCs, checks the totals arithmetic. Walks the document by local name, so any PAC's namespace prefixes work. Reads 4.0 (Pagos 2.0 and Nómina documents included, but only the timbre and local taxes are extracted from complements; the rest are named in `findings`) and 3.3 with a version warning; a *Retenciones e información de pagos* document is refused with that explanation |
+| `cfdi_status` ⭐ | Queries the SAT's public `ConsultaCFDIService` SOAP endpoint: Estado, EsCancelable, EstatusCancelación and ValidaciónEFOS, each with its meaning in plain words. Takes the four key fields **or** the whole XML. Fail-soft: 10 s timeout, one retry after a timeout, network error or 5xx (never after a 4xx), `available: false` on failure — never an exception |
+| `cfdi_batch_status` | Up to 25 invoices through the same service, built to be gentle on it: two requests in flight at most, duplicates asked once, answers cached in memory for 10 minutes (an outage never is), and no new request once two in a row have failed. Bad items are reported one by one and cost no request |
 
 ### Catalogues
 
@@ -83,7 +84,18 @@ and [`seo-geo-mcp-server`](https://github.com/OrtaMarco/seo-geo-mcp-server).
 
 Every tool is **read-only**, declares an `outputSchema` and returns `structuredContent`
 (validated by the SDK) alongside human-readable Markdown (default) or JSON
-(`response_format="json"`).
+(`response_format="json"`). Only `cfdi_status` and `cfdi_batch_status` are annotated
+`openWorldHint: true`: they are the two that reach the network.
+
+### Resources and prompts
+
+| Kind | Name | What it is |
+|---|---|---|
+| Resource | `mx-fiscal://catalogs` | Index of the nine bundled code tables |
+| Resource | `mx-fiscal://catalog/<name>` | One table (`regimen_fiscal`, `uso_cfdi`, …) as JSON, same shape as `sat_catalog_lookup` |
+| Prompt | `review_cfdi` | Parse an invoice, check it at the SAT, report both honestly |
+| Prompt | `validate_identifiers` | Classify and validate a mixed list of RFC / CURP / CLABE / NSS |
+| Prompt | `seed_test_data` | Generate valid fake people or companies for a seed file |
 
 ## Honesty notes
 
@@ -147,9 +159,11 @@ Requires **Node.js 20+**. Nothing to clone — every MCP client can run it with 
 claude mcp add mx-fiscal -- npx -y mx-fiscal-mcp-server
 ```
 
-## Use it with Claude Desktop or Cursor
+Add `--scope user` (all your projects) or `--scope project` (writes a shared `.mcp.json`) before the `--`; the default is local to the current project.
 
-Add to `claude_desktop_config.json` (or `~/.cursor/mcp.json`) — see [`examples/`](./examples/claude_desktop_config.json):
+## Use it with Claude Desktop
+
+Open *Settings → Developer → Edit Config* and add to `claude_desktop_config.json` — see [`examples/`](./examples/claude_desktop_config.json):
 
 ```json
 {
@@ -164,6 +178,24 @@ Add to `claude_desktop_config.json` (or `~/.cursor/mcp.json`) — see [`examples
 
 On Windows use `"command": "cmd"` with `"args": ["/c", "npx", "-y", "mx-fiscal-mcp-server"]`.
 Restart the client, then ask: *"Generate 10 Mexican customers with valid RFC and CURP for my seed file."*
+
+## Use it with Cursor
+
+The same JSON block goes in `~/.cursor/mcp.json` (every project) or `.cursor/mcp.json` (this project only).
+
+## Use it with Codex
+
+```bash
+codex mcp add mx-fiscal -- npx -y mx-fiscal-mcp-server
+```
+
+or in `~/.codex/config.toml` (a project-scoped `.codex/config.toml` also works):
+
+```toml
+[mcp_servers.mx-fiscal]
+command = "npx"
+args = ["-y", "mx-fiscal-mcp-server"]
+```
 
 ## Self-host (HTTP transport)
 
@@ -181,13 +213,15 @@ To expose it — for example behind Coolify or Traefik — opt in explicitly:
 | Variable | Default | Purpose |
 |---|---|---|
 | `TRANSPORT` | `stdio` | `http` to serve Streamable HTTP |
-| `PORT` | `3000` | Listening port |
+| `PORT` | `3000` | Listening port, 1-65535; anything else stops the server with a one-line message |
 | `HOST` | `127.0.0.1` | Bind address; `0.0.0.0` to accept remote connections |
 | `ALLOWED_HOSTS` | — | Comma-separated hostnames the `Host` header may carry (e.g. `mcp.example.com`) |
 | `ALLOWED_ORIGINS` | — | Comma-separated origins allowed to call from a browser |
 | `MCP_AUTH_TOKEN` | — | If set, every request needs `Authorization: Bearer <token>` |
 | `MAX_XML_CHARS` | `2000000` | Largest CFDI accepted, in characters |
-| `MAX_CONCURRENT_CFDI` | `4` | `parse_cfdi` / `cfdi_status` calls served at once; the rest are told to retry |
+| `MAX_CONCURRENT_CFDI` | `4` | `parse_cfdi` / `cfdi_status` / `cfdi_batch_status` calls served at once; the rest are told to retry |
+
+No CORS headers are ever sent, so a web page cannot read its responses cross-origin; `ALLOWED_ORIGINS` only decides which `Origin` headers are let through to the handler (a request without one, as from an MCP client, always is). The request body is capped at about 1.25× `MAX_XML_CHARS`.
 
 A self-hosted instance makes requests to the SAT on its callers' behalf, so do
 not expose it without `MCP_AUTH_TOKEN`: an open one is a free relay that can get
@@ -204,7 +238,8 @@ docker run -p 3000:3000 -e ALLOWED_HOSTS=mcp.example.com -e MCP_AUTH_TOKEN=chang
 npm run dev        # tsx watch (stdio)
 npm run typecheck  # tsc --noEmit
 npm test           # deterministic offline unit tests, HTTP transport defaults included
-npm run smoke      # every tool over the real protocol, on BOTH eras
+npm run smoke      # every tool over the real protocol, on BOTH eras (queries the SAT)
+node scripts/smoke-all.mjs --offline   # the same, minus the calls that reach the SAT
 npm run inspect    # MCP Inspector against the built server
 npm run build      # type-check + emit dist/
 ```
@@ -237,7 +272,7 @@ SSRF surface to guard. The other seven tools make no network calls at all.
 
 **Untrusted XML:** a document that declares a `DOCTYPE` is refused before parsing (a
 CFDI never has one), and size and element-count caps bound the memory one parse can
-take. `cfdi_status` screens the RFCs, total and UUID before spending a request on
+take; attribute values are cut at 4,000 characters in the result. `cfdi_status` screens the RFCs, total and UUID before spending a request on
 them. Found a problem? Please open a [private security advisory](https://github.com/OrtaMarco/mx-fiscal-mcp-server/security/advisories/new).
 
 ---
