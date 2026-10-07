@@ -28,6 +28,7 @@ import {
   interpret,
   queryCfdiStatus,
 } from "../dist/core/sat.js";
+import { BATCH_CONCURRENCY, BATCH_OUTAGE_STOP, batchCfdiStatus, clearStatusCache } from "../dist/core/status-batch.js";
 import { lookupCatalog, CATALOG_NAMES } from "../dist/core/catalogs.js";
 import { reportClabe, reportCurp, reportNss, reportRfc } from "../dist/core/identifiers.js";
 import { generateTestData } from "../dist/core/testdata.js";
@@ -350,6 +351,93 @@ test("the SAT is not asked twice after a 4xx, but is after a 5xx or a network er
     const recovered = await queryCfdiStatus(query);
     assert.equal(recovered.available, true);
     assert.equal(recovered.attempts, 2);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+const batchAnswer =
+  `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><ConsultaResponse xmlns="http://tempuri.org/"><ConsultaResult>` +
+  `<a:CodigoEstatus xmlns:a="x">S - Comprobante obtenido satisfactoriamente.</a:CodigoEstatus><a:Estado xmlns:a="x">Vigente</a:Estado>` +
+  `<a:ValidacionEFOS xmlns:a="x">200</a:ValidacionEFOS></ConsultaResult></ConsultaResponse></s:Body></s:Envelope>`;
+const uuidN = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const fieldsFor = (n) => ({ rfc_emisor: "EKU9003173C9", rfc_receptor: "XAXX010101000", total: "10.00", uuid: uuidN(n) });
+
+test("a batch asks the SAT at most two at a time, once per distinct invoice", async () => {
+  const realFetch = globalThis.fetch;
+  clearStatusCache();
+  let inFlight = 0;
+  let peak = 0;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    peak = Math.max(peak, ++inFlight);
+    await new Promise((r) => setTimeout(r, 20));
+    inFlight--;
+    return new Response(batchAnswer, { status: 200 });
+  };
+  try {
+    const items = [1, 2, 3, 4, 5, 3].map(fieldsFor); // the sixth repeats the third
+    items.push({ rfc_emisor: "ABC", rfc_receptor: "XAXX010101000", total: "1", uuid: "nope" });
+    const batch = await batchCfdiStatus(items);
+    assert.equal(calls, 5);
+    assert.ok(peak <= BATCH_CONCURRENCY, `peak ${peak}`);
+    assert.equal(batch.queried, 5);
+    assert.equal(batch.duplicates, 1);
+    assert.equal(batch.rejected, 1);
+    assert.equal(batch.items[5].outcome, "duplicate");
+    assert.equal(batch.items[5].result.status.estado, "Vigente");
+    assert.equal(batch.items[6].outcome, "rejected");
+    assert.match(batch.items[6].error, /rfc_emisor/);
+
+    // The same invoices again are answered from memory, with no request.
+    const again = await batchCfdiStatus([1, 2].map(fieldsFor));
+    assert.equal(calls, 5);
+    assert.equal(again.cached, 2);
+    assert.equal(again.queried, 0);
+  } finally {
+    globalThis.fetch = realFetch;
+    clearStatusCache();
+  }
+});
+
+test("a batch stops asking after two consecutive outages, and never caches an outage", async () => {
+  const realFetch = globalThis.fetch;
+  clearStatusCache();
+  let calls = 0;
+  globalThis.fetch = async () => (calls++, new Response("bad request", { status: 400 }));
+  try {
+    const batch = await batchCfdiStatus([11, 12, 13, 14, 15, 16].map(fieldsFor));
+    assert.equal(batch.stopped_after_outage, true);
+    // Two requests were already in flight when the first failure landed, so one
+    // more may start before the second failure is seen — never more than that.
+    assert.ok(batch.queried >= BATCH_OUTAGE_STOP && batch.queried <= BATCH_OUTAGE_STOP + BATCH_CONCURRENCY - 1, `queried ${batch.queried}`);
+    assert.equal(batch.unavailable, batch.queried);
+    assert.equal(batch.skipped, 6 - batch.queried);
+    assert.equal(calls, batch.queried);
+    assert.match(batch.items[5].error, /not about the invoice|says nothing about the invoice/);
+
+    // Nothing was remembered: the next batch asks again.
+    globalThis.fetch = async () => (calls++, new Response(batchAnswer, { status: 200 }));
+    const retry = await batchCfdiStatus([fieldsFor(11)]);
+    assert.equal(retry.queried, 1);
+    assert.equal(retry.items[0].result.available, true);
+  } finally {
+    globalThis.fetch = realFetch;
+    clearStatusCache();
+  }
+});
+
+test("an unstamped XML in a batch is rejected locally and costs no request", async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => (calls++, new Response(batchAnswer, { status: 200 }));
+  try {
+    const batch = await batchCfdiStatus([{ xml: unstamped }, { xml: "<not-a-cfdi/>" }]);
+    assert.equal(calls, 0);
+    assert.equal(batch.rejected, 2);
+    assert.match(batch.items[0].error, /no Timbre Fiscal Digital/);
+    assert.match(batch.items[1].error, /not a CFDI/);
   } finally {
     globalThis.fetch = realFetch;
   }

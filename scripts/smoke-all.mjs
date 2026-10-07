@@ -31,6 +31,7 @@ import { dirname, join } from "node:path";
 
 import {
   CatalogSchema,
+  CfdiBatchStatusSchema,
   CfdiSchema,
   CfdiStatusSchema,
   ClabeSchema,
@@ -43,7 +44,11 @@ import { buildClabe } from "mx-identifiers";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const stampedXml = readFileSync(join(ROOT, "test", "fixtures", "cfdi40-timbrado.xml"), "utf8");
+const unstampedXml = readFileSync(join(ROOT, "test", "fixtures", "cfdi40-sin-timbre.xml"), "utf8");
 const CLABE = buildClabe("012");
+
+/** `--offline` (or SMOKE_OFFLINE=1) skips the calls that reach the SAT (cfdi_status), so no request leaves the machine. */
+const OFFLINE = process.argv.includes("--offline") || process.env.SMOKE_OFFLINE === "1";
 
 /**
  * One entry per call: the tool, its arguments, the schema its
@@ -99,13 +104,25 @@ const CALLS = [
   {
     tool: "cfdi_status",
     label: "cfdi_status (xml)",
+    online: true,
     args: { xml: stampedXml },
     schema: CfdiStatusSchema,
     signal: (s) => (s.available ? `SAT says '${s.status.estado}'` : `unavailable: ${s.unavailable_reason?.slice(0, 60)}`),
   },
   {
+    // An unstamped XML and a malformed field are both refused before any request,
+    // so this call never reaches the SAT.
+    tool: "cfdi_batch_status",
+    label: "cfdi_batch_status",
+    args: { items: [{ xml: unstampedXml }, { rfc_emisor: "ABC", rfc_receptor: "XAXX010101000", total: "1", uuid: "x" }] },
+    schema: CfdiBatchStatusSchema,
+    signal: (s) => `${s.total} item(s), ${s.rejected} rejected, ${s.queried} sent to the SAT`,
+    expect: (s) => (s.rejected === 2 && s.queried === 0 ? null : "both items should be rejected locally"),
+  },
+  {
     tool: "cfdi_status",
     label: "cfdi_status (fields)",
+    online: true,
     args: {
       rfc_emisor: "TES150312DX2",
       rfc_receptor: "PELJ900521DK2",
@@ -169,8 +186,31 @@ async function runEra(name, options) {
     }
   }
 
+  // Resources and prompts: listed, one read, one rendered.
+  const { resources } = await client.listResources();
+  const { prompts } = await client.listPrompts();
+  console.log(`  resources: ${resources.length}, prompts: ${prompts.map((p) => p.name).join(", ")}`);
+  if (resources.length !== 10 || prompts.length !== 3) {
+    console.log(`  ❌ expected 10 resources and 3 prompts`);
+    failed++;
+  }
+  const read = await client.readResource({ uri: "mx-fiscal://catalog/uso_cfdi" });
+  const catalog = JSON.parse(read.contents[0].text);
+  if (catalog.official_name !== "c_UsoCFDI" || !catalog.entries.some((e) => e.code === "G03")) {
+    console.log(`  ❌ mx-fiscal://catalog/uso_cfdi did not return c_UsoCFDI with G03`);
+    failed++;
+  }
+  const prompt = await client.getPrompt({ name: "review_cfdi", arguments: { xml: "<x/>" } });
+  if (!/parse_cfdi/.test(prompt.messages[0].content.text)) {
+    console.log(`  ❌ review_cfdi did not mention parse_cfdi`);
+    failed++;
+  }
+
   let passed = 0;
+  let planned_calls = 0;
   for (const call of CALLS) {
+    if (OFFLINE && call.online) continue;
+    planned_calls++;
     const label = call.label ?? call.tool;
     const began = Date.now();
     try {
@@ -215,8 +255,8 @@ async function runEra(name, options) {
   }
 
   await client.close();
-  console.log(`  ${passed} passed, ${failed} failed (of ${CALLS.length} calls)`);
-  return { passed, failed, era };
+  console.log(`  ${passed} passed, ${failed} failed (of ${planned_calls} calls)${OFFLINE ? " — offline: no SAT request made" : ""}`);
+  return { passed, failed, era, planned_calls };
 }
 
 const modern = await runEra("modern (2026-07-28)", { versionNegotiation: { mode: "auto" } });
@@ -233,6 +273,6 @@ if (legacy.era !== "legacy") {
 }
 
 console.log(
-  `\n${modern.passed + legacy.passed} passed, ${failures} failed across both eras (${CALLS.length} calls each).`,
+  `\n${modern.passed + legacy.passed} passed, ${failures} failed across both eras (${modern.planned_calls} calls each).`,
 );
 process.exit(failures > 0 ? 1 : 0);
