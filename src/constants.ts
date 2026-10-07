@@ -60,6 +60,13 @@ export const MAX_XML_CHARS = Number(process.env.MAX_XML_CHARS) > 0 ? Number(proc
 /** Largest number of elements a CFDI may contain before it is refused unparsed. */
 export const MAX_XML_ELEMENTS = 200_000;
 
+/**
+ * Longest attribute value `parse_cfdi` copies into its result. A real attribute
+ * (even a long Descripcion) is far shorter; without a cap a 2 MB attribute
+ * would be echoed whole into `structuredContent`.
+ */
+export const MAX_ATTR_CHARS = 4_000;
+
 /** Conceptos returned in `parse_cfdi`'s structured payload; the count is always exact. */
 export const MAX_REPORTED_CONCEPTOS = 500;
 

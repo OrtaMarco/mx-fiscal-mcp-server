@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sintético: Retenciones e información de pagos 2.0, RFC genérico de prueba, datos inventados. -->
+<retenciones:Retenciones xmlns:retenciones="http://www.sat.gob.mx/esquemas/retencionpago/2" Version="2.0" FolioInt="R1" FechaExp="2026-03-12T10:00:00-06:00" CveRetenc="14" LugarExpRetenc="64000" NoCertificado="30001000000500003416">
+  <retenciones:Emisor RfcE="EKU9003173C9" NomDenRazSocE="ESCUELA KEMPER URGATE" RegimenFiscalE="601"/>
+  <retenciones:Receptor NacionalidadR="Nacional">
+    <retenciones:Nacional RfcR="XAXX010101000" NomDenRazSocR="PUBLICO EN GENERAL" DomicilioFiscalR="64000"/>
+  </retenciones:Receptor>
+  <retenciones:Periodo MesIni="03" MesFin="03" Ejercicio="2026"/>
+  <retenciones:Totales MontoTotOperacion="1000" MontoTotGrav="1000" MontoTotExent="0" MontoTotRet="100"/>
+</retenciones:Retenciones>

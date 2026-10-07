@@ -31,7 +31,7 @@ import {
 import { lookupCatalog, CATALOG_NAMES } from "../dist/core/catalogs.js";
 import { reportClabe, reportCurp, reportNss, reportRfc } from "../dist/core/identifiers.js";
 import { generateTestData } from "../dist/core/testdata.js";
-import { MAX_REPORTED_CONCEPTOS, MAX_XML_ELEMENTS } from "../dist/constants.js";
+import { MAX_ATTR_CHARS, MAX_REPORTED_CONCEPTOS, MAX_XML_ELEMENTS } from "../dist/constants.js";
 import { clabeCheckDigit, validateClabe, validateCurp, validateNss, validateRfc } from "mx-identifiers";
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "test", "fixtures");
@@ -568,6 +568,75 @@ test("local taxes from the implocal complement count toward the declared total",
   // Control: the same total without the complement no longer adds up.
   const withoutLocal = withLocal.replace(implocal, "");
   assert.equal(parseCfdi(withoutLocal).arithmetic.matches, false);
+});
+
+// --- other document shapes (synthetic fixtures, SAT generic test RFCs) -------------
+
+const pago20 = readFileSync(join(FIXTURES, "cfdi40-pago20-sintetico.xml"), "utf8");
+const cfdi33 = readFileSync(join(FIXTURES, "cfdi33-sintetico.xml"), "utf8");
+const retenciones = readFileSync(join(FIXTURES, "retenciones20-sintetico.xml"), "utf8");
+
+test("a CFDI 4.0 with the Pagos 2.0 complement is read, and the unread complement is named", () => {
+  const doc = parseCfdi(pago20);
+  assert.equal(doc.tipo, "P");
+  assert.equal(doc.tipo_label, "Pago");
+  assert.equal(doc.stamped, true);
+  assert.equal(doc.arithmetic.matches, true);
+  const note = doc.findings.find((f) => /does not extract/.test(f.message));
+  assert.ok(note, "expected a finding about the unread complement");
+  assert.match(note.message, /Pagos/);
+  assert.doesNotMatch(note.message, /TimbreFiscalDigital/);
+});
+
+test("a stamped CFDI whose only complement is the timbre raises no unread-complement note", () => {
+  assert.ok(!parseCfdi(stamped).findings.some((f) => /does not extract/.test(f.message)));
+});
+
+test("a CFDI 3.3 is read with a version warning instead of being rejected", () => {
+  const doc = parseCfdi(cfdi33);
+  assert.equal(doc.version, "3.3");
+  assert.equal(doc.total, "116.00");
+  assert.equal(doc.arithmetic.matches, true);
+  assert.ok(doc.findings.some((f) => f.severity === "warn" && /not 4\.0/.test(f.message)));
+});
+
+test("a Retenciones document is named as such and refused", () => {
+  assert.throws(
+    () => parseCfdi(retenciones),
+    (err) => err instanceof CfdiParseError && err.reason === "not_cfdi" && /Retenciones e información de pagos/.test(err.message),
+  );
+});
+
+test("a leading BOM and surrounding whitespace do not stop a CFDI from parsing", () => {
+  assert.equal(parseCfdi(`﻿\n  ${stamped}\n`).total, "1160.00");
+});
+
+test("an undefined entity reference is a parser note, never an expansion", () => {
+  const doc = parseCfdi(stamped.replace('Descripcion="Desarrollo de sitio web"', 'Descripcion="&xxe;"'));
+  assert.ok(!doc.conceptos[0].descripcion.includes("root:"));
+  assert.ok(doc.findings.some((f) => /XML parser note/.test(f.message)));
+});
+
+test("a DOCTYPE hidden in a comment is refused too", () => {
+  const xml = `<!-- <!DOCTYPE x [<!ENTITY a "b">]> -->${stamped.replace(/^<\?xml[^>]*>/, "")}`;
+  assert.throws(() => parseCfdi(xml), (err) => err instanceof CfdiParseError && err.reason === "doctype");
+});
+
+test("a multi-megabyte attribute is cut in the result and flagged, not echoed whole", () => {
+  const huge = stamped.replace('Descripcion="Desarrollo de sitio web"', `Descripcion="${"x".repeat(1_500_000)}"`);
+  const doc = parseCfdi(huge);
+  assert.ok(doc.conceptos[0].descripcion.length <= MAX_ATTR_CHARS + 1);
+  assert.ok(JSON.stringify(doc).length < 100_000);
+  assert.ok(doc.findings.some((f) => f.severity === "warn" && /longer than/.test(f.message)));
+  assert.ok(!parseCfdi(stamped).findings.some((f) => /longer than/.test(f.message)));
+});
+
+test("deeply nested elements neither crash nor hang the reader", () => {
+  const depth = 100_000;
+  const xml = `<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" Version="4.0">${"<a>".repeat(depth)}${"</a>".repeat(depth)}</cfdi:Comprobante>`;
+  const began = Date.now();
+  assert.equal(parseCfdi(xml).version, "4.0");
+  assert.ok(Date.now() - began < 5_000);
 });
 
 // --- SAT query screening -----------------------------------------------------
