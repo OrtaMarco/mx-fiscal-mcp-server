@@ -318,6 +318,43 @@ test("cfdi_status findings warn on a listed issuer or third party, and only then
   }
 });
 
+test("the SAT is not asked twice after a 4xx, but is after a 5xx or a network error", async () => {
+  const realFetch = globalThis.fetch;
+  const query = {
+    rfc_emisor: "EKU9003173C9",
+    rfc_receptor: "XAXX010101000",
+    total: "1160.00",
+    uuid: "00000000-0000-4000-8000-000000000001",
+  };
+  const ok =
+    `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><ConsultaResponse xmlns="http://tempuri.org/"><ConsultaResult>` +
+    `<a:Estado xmlns:a="x">Vigente</a:Estado></ConsultaResult></ConsultaResponse></s:Body></s:Envelope>`;
+  let calls = 0;
+  try {
+    globalThis.fetch = async () => (calls++, new Response("bad request", { status: 400 }));
+    const client = await queryCfdiStatus(query);
+    assert.equal(client.available, false);
+    assert.equal(calls, 1);
+    assert.equal(client.attempts, 1);
+    assert.match(client.unavailable_reason, /HTTP 400/);
+
+    calls = 0;
+    globalThis.fetch = async () => (calls++, new Response("down", { status: 503 }));
+    const server = await queryCfdiStatus(query);
+    assert.equal(server.available, false);
+    assert.equal(calls, 2);
+    assert.equal(server.attempts, 2);
+
+    calls = 0;
+    globalThis.fetch = async () => (++calls === 1 ? Promise.reject(new TypeError("fetch failed")) : new Response(ok, { status: 200 }));
+    const recovered = await queryCfdiStatus(query);
+    assert.equal(recovered.available, true);
+    assert.equal(recovered.attempts, 2);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test("the late-2020 alternative spelling of the EFOS field is read too", () => {
   assert.equal(interpret({ VerificacionEFOS: "200" }).validacion_efos, "200");
 });
@@ -728,6 +765,22 @@ test("HTTP transport enforces MCP_AUTH_TOKEN and answers parse errors in JSON-RP
     assert.equal(JSON.parse(broken.body).error.code, -32700);
   } finally {
     await srv.stop();
+  }
+});
+
+test("an invalid PORT stops the HTTP server with a one-line explanation, not a stack trace", async () => {
+  for (const bad of ["abc", "3000abc", "0", "70000", "-1", "30.5"]) {
+    const child = spawn(process.execPath, [fileURLToPath(new URL("../dist/index.js", import.meta.url))], {
+      env: { ...process.env, TRANSPORT: "http", PORT: bad },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let log = "";
+    child.stderr.on("data", (c) => (log += c));
+    const code = await new Promise((r) => child.once("exit", r));
+    assert.equal(code, 1, `PORT=${bad}`);
+    assert.match(log, /PORT must be a whole number from 1 to 65535/, `PORT=${bad}`);
+    assert.ok(log.includes(`'${bad}'`));
+    assert.doesNotMatch(log, /\n\s+at /);
   }
 });
 
