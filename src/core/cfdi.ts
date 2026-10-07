@@ -24,7 +24,7 @@ import {
   CFDI_TIPO,
   CFDI_USO,
 } from "mx-identifiers";
-import { MAX_REPORTED_CONCEPTOS, MAX_XML_CHARS, MAX_XML_ELEMENTS } from "../constants.js";
+import { MAX_ATTR_CHARS, MAX_REPORTED_CONCEPTOS, MAX_XML_CHARS, MAX_XML_ELEMENTS } from "../constants.js";
 import type { Finding } from "../format.js";
 import { reportRfc } from "./identifiers.js";
 
@@ -151,8 +151,21 @@ function elementChildren(el: Element | null): Element[] {
 }
 
 function attr(el: Element | null, name: string): string {
-  return el?.getAttribute(name) ?? "";
+  const value = el?.getAttribute(name) ?? "";
+  return value.length > MAX_ATTR_CHARS ? `${value.slice(0, MAX_ATTR_CHARS)}…` : value;
 }
+
+/**
+ * Root elements that are well-formed SAT documents but not a CFDI this reader
+ * understands. Keyed by local name.
+ */
+const OTHER_SAT_ROOTS: Record<string, string> = {
+  Retenciones:
+    "a 'Retenciones e información de pagos' document, which is a different SAT document type with its own schema (not a CFDI de ingresos, egresos, traslado, nómina or pagos)",
+};
+
+/** Complements whose content `parse_cfdi` reads; any other one is only named. */
+const READ_COMPLEMENTS = new Set(["TimbreFiscalDigital", "ImpuestosLocales"]);
 
 function label(code: string, catalog: Record<string, string>): string | null {
   if (!code) return null;
@@ -271,6 +284,13 @@ export function parseCfdi(xml: string): CfdiDocument {
   }
 
   const root = doc.documentElement;
+  const rootName = root?.localName ?? "";
+  if (Object.hasOwn(OTHER_SAT_ROOTS, rootName)) {
+    throw new CfdiParseError(
+      `The input is ${OTHER_SAT_ROOTS[rootName]}; this reader only handles documents whose root is 'Comprobante' (usually written 'cfdi:Comprobante').`,
+      "not_cfdi",
+    );
+  }
   if (!root || root.localName !== "Comprobante") {
     throw new CfdiParseError(
       `The input is valid XML but not a CFDI: the root element is '${root?.nodeName ?? "(none)"}', expected 'Comprobante' (usually written 'cfdi:Comprobante').`,
@@ -374,6 +394,25 @@ export function parseCfdi(xml: string): CfdiDocument {
     findings.push({
       severity: "pass",
       message: `Totals add up: subtotal − discount + transferred − withheld${implocalEl ? " (local taxes included)" : ""} = total.`,
+    });
+  }
+  const unread = [
+    ...new Set(
+      elementChildren(child(root, "Complemento"))
+        .map((n) => n.localName ?? "")
+        .filter((name) => name && !READ_COMPLEMENTS.has(name)),
+    ),
+  ];
+  if (unread.length > 0) {
+    findings.push({
+      severity: "info",
+      message: `The Complemento carries ${unread.join(", ")}, whose content this reader does not extract: only the Timbre Fiscal Digital and local taxes (ImpuestosLocales) are read from complements. Open the XML itself for those details.`,
+    });
+  }
+  if (/=\s*(?:"[^"]{4001,}"|'[^']{4001,}')/.test(xml)) {
+    findings.push({
+      severity: "warn",
+      message: `At least one attribute value is longer than ${MAX_ATTR_CHARS} characters; every value is cut at that length in the result, so a number read from one is not reliable.`,
     });
   }
   if (conceptos.length > MAX_REPORTED_CONCEPTOS) {

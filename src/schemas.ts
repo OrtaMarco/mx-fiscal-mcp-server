@@ -237,14 +237,13 @@ export const CfdiSchema = z.object({
   findings: Findings,
 });
 
-export const CfdiStatusSchema = z.object({
+const SatStatusResultSchema = z.object({
   available: z.boolean(),
   unavailable_reason: z.string().nullable(),
   endpoint: z.string(),
   expression: z.string(),
   attempts: z.number(),
   elapsed_ms: z.number(),
-  source: z.enum(["fields", "xml"]),
   status: z
     .object({
       codigo_estatus: z.string(),
@@ -273,6 +272,29 @@ export const CfdiStatusSchema = z.object({
     })
     .nullable(),
   findings: Findings,
+});
+
+export const CfdiStatusSchema = SatStatusResultSchema.extend({ source: z.enum(["fields", "xml"]) });
+
+export const CfdiBatchStatusSchema = z.object({
+  total: z.number(),
+  queried: z.number(),
+  cached: z.number(),
+  duplicates: z.number(),
+  rejected: z.number(),
+  skipped: z.number(),
+  unavailable: z.number(),
+  stopped_after_outage: z.boolean(),
+  items: z.array(
+    z.object({
+      index: z.number(),
+      outcome: z.enum(["queried", "cached", "duplicate", "rejected", "skipped"]),
+      source: z.enum(["fields", "xml"]).nullable(),
+      error: z.string().nullable(),
+      uuid: z.string().nullable(),
+      result: SatStatusResultSchema.nullable(),
+    }),
+  ),
 });
 
 // --- catalogues -------------------------------------------------------------

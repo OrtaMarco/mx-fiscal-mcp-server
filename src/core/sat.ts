@@ -371,6 +371,20 @@ export interface SatStatusResult {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** An HTTP answer from the SAT that is not a 2xx. A 4xx is final: retrying it only adds load. */
+class SatHttpError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "SatHttpError";
+  }
+  get retryable(): boolean {
+    return this.status < 400 || this.status >= 500;
+  }
+}
+
 async function attempt(expression: string): Promise<Record<string, string>> {
   const response = await fetch(SAT_CONSULTA_URL, {
     method: "POST",
@@ -385,10 +399,11 @@ async function attempt(expression: string): Promise<Record<string, string>> {
 
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(
+    throw new SatHttpError(
       `the SAT answered HTTP ${response.status} ${response.statusText}${
         text.trim() ? ` — ${text.trim().slice(0, 200)}` : ""
       }`,
+      response.status,
     );
   }
   const values = extractConsultaResult(text);
@@ -415,8 +430,10 @@ export async function queryCfdiStatus(input: {
   const expression = buildExpression(input);
   const began = Date.now();
   let lastError = "";
+  let made = 0;
 
   for (let tries = 0; tries <= SAT_RETRIES; tries++) {
+    made = tries + 1;
     if (tries > 0) await sleep(SAT_RETRY_DELAY_MS);
     try {
       const values = await attempt(expression);
@@ -458,6 +475,7 @@ export async function queryCfdiStatus(input: {
       };
     } catch (err) {
       lastError = describe(err);
+      if (err instanceof SatHttpError && !err.retryable) break;
     }
   }
 
@@ -466,7 +484,7 @@ export async function queryCfdiStatus(input: {
     unavailable_reason: lastError,
     endpoint: SAT_CONSULTA_URL,
     expression,
-    attempts: SAT_RETRIES + 1,
+    attempts: made,
     elapsed_ms: Date.now() - began,
     status: null,
     findings: [

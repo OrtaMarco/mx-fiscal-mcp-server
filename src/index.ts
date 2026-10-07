@@ -71,7 +71,12 @@ function bearerMatches(header: string | undefined, token: string): boolean {
  * a reverse proxy forwards) and, ideally, MCP_AUTH_TOKEN.
  */
 function runHttp(): void {
-  const port = parseInt(process.env.PORT ?? "3000", 10);
+  const rawPort = (process.env.PORT ?? "").trim() || "3000";
+  const port = /^\d{1,5}$/.test(rawPort) ? Number(rawPort) : NaN;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    console.error(`${SERVER_NAME}: PORT must be a whole number from 1 to 65535, got '${rawPort}'. Unset it to use 3000.`);
+    process.exit(1);
+  }
   const host = process.env.HOST || "127.0.0.1";
   const loopback = ["127.0.0.1", "localhost", "::1"].includes(host);
   const allowedHosts = hostnameList(process.env.ALLOWED_HOSTS);

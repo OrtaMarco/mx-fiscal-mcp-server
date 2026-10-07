@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sintético: RFC genéricos de prueba del SAT, UUID y certificados inventados. -->
+<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" xmlns:pago20="http://www.sat.gob.mx/Pagos20" xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" Version="4.0" Serie="P" Folio="1" Fecha="2026-03-12T10:00:00" SubTotal="0" Moneda="XXX" Total="0" TipoDeComprobante="P" Exportacion="01" LugarExpedicion="64000" NoCertificado="30001000000500003416">
+  <cfdi:Emisor Rfc="EKU9003173C9" Nombre="ESCUELA KEMPER URGATE" RegimenFiscal="601"/>
+  <cfdi:Receptor Rfc="XAXX010101000" Nombre="PUBLICO EN GENERAL" DomicilioFiscalReceptor="64000" RegimenFiscalReceptor="616" UsoCFDI="CP01"/>
+  <cfdi:Conceptos>
+    <cfdi:Concepto ClaveProdServ="84111506" Cantidad="1" ClaveUnidad="ACT" Descripcion="Pago" ValorUnitario="0" Importe="0" ObjetoImp="01"/>
+  </cfdi:Conceptos>
+  <cfdi:Complemento>
+    <pago20:Pagos Version="2.0">
+      <pago20:Totales MontoTotalPagos="1160.00"/>
+      <pago20:Pago FechaPago="2026-03-12T09:00:00" FormaDePagoP="03" MonedaP="MXN" Monto="1160.00" TipoCambioP="1"/>
+    </pago20:Pagos>
+    <tfd:TimbreFiscalDigital Version="1.1" UUID="00000000-0000-4000-8000-000000000002" FechaTimbrado="2026-03-12T10:00:05" RfcProvCertif="SPR190613I52" SelloCFD="U0lOVEVUSUNP" NoCertificadoSAT="30001000000500003417" SelloSAT="U0lOVEVUSUNP"/>
+  </cfdi:Complemento>
+</cfdi:Comprobante>

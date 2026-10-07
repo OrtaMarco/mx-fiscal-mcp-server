@@ -28,10 +28,11 @@ import {
   interpret,
   queryCfdiStatus,
 } from "../dist/core/sat.js";
+import { BATCH_CONCURRENCY, BATCH_OUTAGE_STOP, batchCfdiStatus, clearStatusCache } from "../dist/core/status-batch.js";
 import { lookupCatalog, CATALOG_NAMES } from "../dist/core/catalogs.js";
 import { reportClabe, reportCurp, reportNss, reportRfc } from "../dist/core/identifiers.js";
 import { generateTestData } from "../dist/core/testdata.js";
-import { MAX_REPORTED_CONCEPTOS, MAX_XML_ELEMENTS } from "../dist/constants.js";
+import { MAX_ATTR_CHARS, MAX_REPORTED_CONCEPTOS, MAX_XML_ELEMENTS } from "../dist/constants.js";
 import { clabeCheckDigit, validateClabe, validateCurp, validateNss, validateRfc } from "mx-identifiers";
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "test", "fixtures");
@@ -318,6 +319,130 @@ test("cfdi_status findings warn on a listed issuer or third party, and only then
   }
 });
 
+test("the SAT is not asked twice after a 4xx, but is after a 5xx or a network error", async () => {
+  const realFetch = globalThis.fetch;
+  const query = {
+    rfc_emisor: "EKU9003173C9",
+    rfc_receptor: "XAXX010101000",
+    total: "1160.00",
+    uuid: "00000000-0000-4000-8000-000000000001",
+  };
+  const ok =
+    `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><ConsultaResponse xmlns="http://tempuri.org/"><ConsultaResult>` +
+    `<a:Estado xmlns:a="x">Vigente</a:Estado></ConsultaResult></ConsultaResponse></s:Body></s:Envelope>`;
+  let calls = 0;
+  try {
+    globalThis.fetch = async () => (calls++, new Response("bad request", { status: 400 }));
+    const client = await queryCfdiStatus(query);
+    assert.equal(client.available, false);
+    assert.equal(calls, 1);
+    assert.equal(client.attempts, 1);
+    assert.match(client.unavailable_reason, /HTTP 400/);
+
+    calls = 0;
+    globalThis.fetch = async () => (calls++, new Response("down", { status: 503 }));
+    const server = await queryCfdiStatus(query);
+    assert.equal(server.available, false);
+    assert.equal(calls, 2);
+    assert.equal(server.attempts, 2);
+
+    calls = 0;
+    globalThis.fetch = async () => (++calls === 1 ? Promise.reject(new TypeError("fetch failed")) : new Response(ok, { status: 200 }));
+    const recovered = await queryCfdiStatus(query);
+    assert.equal(recovered.available, true);
+    assert.equal(recovered.attempts, 2);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+const batchAnswer =
+  `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><ConsultaResponse xmlns="http://tempuri.org/"><ConsultaResult>` +
+  `<a:CodigoEstatus xmlns:a="x">S - Comprobante obtenido satisfactoriamente.</a:CodigoEstatus><a:Estado xmlns:a="x">Vigente</a:Estado>` +
+  `<a:ValidacionEFOS xmlns:a="x">200</a:ValidacionEFOS></ConsultaResult></ConsultaResponse></s:Body></s:Envelope>`;
+const uuidN = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const fieldsFor = (n) => ({ rfc_emisor: "EKU9003173C9", rfc_receptor: "XAXX010101000", total: "10.00", uuid: uuidN(n) });
+
+test("a batch asks the SAT at most two at a time, once per distinct invoice", async () => {
+  const realFetch = globalThis.fetch;
+  clearStatusCache();
+  let inFlight = 0;
+  let peak = 0;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    peak = Math.max(peak, ++inFlight);
+    await new Promise((r) => setTimeout(r, 20));
+    inFlight--;
+    return new Response(batchAnswer, { status: 200 });
+  };
+  try {
+    const items = [1, 2, 3, 4, 5, 3].map(fieldsFor); // the sixth repeats the third
+    items.push({ rfc_emisor: "ABC", rfc_receptor: "XAXX010101000", total: "1", uuid: "nope" });
+    const batch = await batchCfdiStatus(items);
+    assert.equal(calls, 5);
+    assert.ok(peak <= BATCH_CONCURRENCY, `peak ${peak}`);
+    assert.equal(batch.queried, 5);
+    assert.equal(batch.duplicates, 1);
+    assert.equal(batch.rejected, 1);
+    assert.equal(batch.items[5].outcome, "duplicate");
+    assert.equal(batch.items[5].result.status.estado, "Vigente");
+    assert.equal(batch.items[6].outcome, "rejected");
+    assert.match(batch.items[6].error, /rfc_emisor/);
+
+    // The same invoices again are answered from memory, with no request.
+    const again = await batchCfdiStatus([1, 2].map(fieldsFor));
+    assert.equal(calls, 5);
+    assert.equal(again.cached, 2);
+    assert.equal(again.queried, 0);
+  } finally {
+    globalThis.fetch = realFetch;
+    clearStatusCache();
+  }
+});
+
+test("a batch stops asking after two consecutive outages, and never caches an outage", async () => {
+  const realFetch = globalThis.fetch;
+  clearStatusCache();
+  let calls = 0;
+  globalThis.fetch = async () => (calls++, new Response("bad request", { status: 400 }));
+  try {
+    const batch = await batchCfdiStatus([11, 12, 13, 14, 15, 16].map(fieldsFor));
+    assert.equal(batch.stopped_after_outage, true);
+    // Two requests were already in flight when the first failure landed, so one
+    // more may start before the second failure is seen — never more than that.
+    assert.ok(batch.queried >= BATCH_OUTAGE_STOP && batch.queried <= BATCH_OUTAGE_STOP + BATCH_CONCURRENCY - 1, `queried ${batch.queried}`);
+    assert.equal(batch.unavailable, batch.queried);
+    assert.equal(batch.skipped, 6 - batch.queried);
+    assert.equal(calls, batch.queried);
+    assert.match(batch.items[5].error, /not about the invoice|says nothing about the invoice/);
+
+    // Nothing was remembered: the next batch asks again.
+    globalThis.fetch = async () => (calls++, new Response(batchAnswer, { status: 200 }));
+    const retry = await batchCfdiStatus([fieldsFor(11)]);
+    assert.equal(retry.queried, 1);
+    assert.equal(retry.items[0].result.available, true);
+  } finally {
+    globalThis.fetch = realFetch;
+    clearStatusCache();
+  }
+});
+
+test("an unstamped XML in a batch is rejected locally and costs no request", async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => (calls++, new Response(batchAnswer, { status: 200 }));
+  try {
+    const batch = await batchCfdiStatus([{ xml: unstamped }, { xml: "<not-a-cfdi/>" }]);
+    assert.equal(calls, 0);
+    assert.equal(batch.rejected, 2);
+    assert.match(batch.items[0].error, /no Timbre Fiscal Digital/);
+    assert.match(batch.items[1].error, /not a CFDI/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test("the late-2020 alternative spelling of the EFOS field is read too", () => {
   assert.equal(interpret({ VerificacionEFOS: "200" }).validacion_efos, "200");
 });
@@ -570,6 +695,75 @@ test("local taxes from the implocal complement count toward the declared total",
   assert.equal(parseCfdi(withoutLocal).arithmetic.matches, false);
 });
 
+// --- other document shapes (synthetic fixtures, SAT generic test RFCs) -------------
+
+const pago20 = readFileSync(join(FIXTURES, "cfdi40-pago20-sintetico.xml"), "utf8");
+const cfdi33 = readFileSync(join(FIXTURES, "cfdi33-sintetico.xml"), "utf8");
+const retenciones = readFileSync(join(FIXTURES, "retenciones20-sintetico.xml"), "utf8");
+
+test("a CFDI 4.0 with the Pagos 2.0 complement is read, and the unread complement is named", () => {
+  const doc = parseCfdi(pago20);
+  assert.equal(doc.tipo, "P");
+  assert.equal(doc.tipo_label, "Pago");
+  assert.equal(doc.stamped, true);
+  assert.equal(doc.arithmetic.matches, true);
+  const note = doc.findings.find((f) => /does not extract/.test(f.message));
+  assert.ok(note, "expected a finding about the unread complement");
+  assert.match(note.message, /Pagos/);
+  assert.doesNotMatch(note.message, /TimbreFiscalDigital/);
+});
+
+test("a stamped CFDI whose only complement is the timbre raises no unread-complement note", () => {
+  assert.ok(!parseCfdi(stamped).findings.some((f) => /does not extract/.test(f.message)));
+});
+
+test("a CFDI 3.3 is read with a version warning instead of being rejected", () => {
+  const doc = parseCfdi(cfdi33);
+  assert.equal(doc.version, "3.3");
+  assert.equal(doc.total, "116.00");
+  assert.equal(doc.arithmetic.matches, true);
+  assert.ok(doc.findings.some((f) => f.severity === "warn" && /not 4\.0/.test(f.message)));
+});
+
+test("a Retenciones document is named as such and refused", () => {
+  assert.throws(
+    () => parseCfdi(retenciones),
+    (err) => err instanceof CfdiParseError && err.reason === "not_cfdi" && /Retenciones e información de pagos/.test(err.message),
+  );
+});
+
+test("a leading BOM and surrounding whitespace do not stop a CFDI from parsing", () => {
+  assert.equal(parseCfdi(`﻿\n  ${stamped}\n`).total, "1160.00");
+});
+
+test("an undefined entity reference is a parser note, never an expansion", () => {
+  const doc = parseCfdi(stamped.replace('Descripcion="Desarrollo de sitio web"', 'Descripcion="&xxe;"'));
+  assert.ok(!doc.conceptos[0].descripcion.includes("root:"));
+  assert.ok(doc.findings.some((f) => /XML parser note/.test(f.message)));
+});
+
+test("a DOCTYPE hidden in a comment is refused too", () => {
+  const xml = `<!-- <!DOCTYPE x [<!ENTITY a "b">]> -->${stamped.replace(/^<\?xml[^>]*>/, "")}`;
+  assert.throws(() => parseCfdi(xml), (err) => err instanceof CfdiParseError && err.reason === "doctype");
+});
+
+test("a multi-megabyte attribute is cut in the result and flagged, not echoed whole", () => {
+  const huge = stamped.replace('Descripcion="Desarrollo de sitio web"', `Descripcion="${"x".repeat(1_500_000)}"`);
+  const doc = parseCfdi(huge);
+  assert.ok(doc.conceptos[0].descripcion.length <= MAX_ATTR_CHARS + 1);
+  assert.ok(JSON.stringify(doc).length < 100_000);
+  assert.ok(doc.findings.some((f) => f.severity === "warn" && /longer than/.test(f.message)));
+  assert.ok(!parseCfdi(stamped).findings.some((f) => /longer than/.test(f.message)));
+});
+
+test("deeply nested elements neither crash nor hang the reader", () => {
+  const depth = 100_000;
+  const xml = `<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" Version="4.0">${"<a>".repeat(depth)}${"</a>".repeat(depth)}</cfdi:Comprobante>`;
+  const began = Date.now();
+  assert.equal(parseCfdi(xml).version, "4.0");
+  assert.ok(Date.now() - began < 5_000);
+});
+
 // --- SAT query screening -----------------------------------------------------
 
 test("an RFC with '&' is carried as &amp; in the expression, whichever way it was typed", () => {
@@ -659,6 +853,22 @@ test("HTTP transport enforces MCP_AUTH_TOKEN and answers parse errors in JSON-RP
     assert.equal(JSON.parse(broken.body).error.code, -32700);
   } finally {
     await srv.stop();
+  }
+});
+
+test("an invalid PORT stops the HTTP server with a one-line explanation, not a stack trace", async () => {
+  for (const bad of ["abc", "3000abc", "0", "70000", "-1", "30.5"]) {
+    const child = spawn(process.execPath, [fileURLToPath(new URL("../dist/index.js", import.meta.url))], {
+      env: { ...process.env, TRANSPORT: "http", PORT: bad },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let log = "";
+    child.stderr.on("data", (c) => (log += c));
+    const code = await new Promise((r) => child.once("exit", r));
+    assert.equal(code, 1, `PORT=${bad}`);
+    assert.match(log, /PORT must be a whole number from 1 to 65535/, `PORT=${bad}`);
+    assert.ok(log.includes(`'${bad}'`));
+    assert.doesNotMatch(log, /\n\s+at /);
   }
 });
 

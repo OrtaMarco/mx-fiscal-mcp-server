@@ -12,14 +12,17 @@ import { SERVER_NAME, SERVER_VERSION } from "./constants.js";
 import { registerIdentifierTools } from "./tools/identifiers.js";
 import { registerCfdiTools } from "./tools/cfdi.js";
 import { registerCatalogTools } from "./tools/catalogs.js";
+import { registerResources } from "./resources.js";
+import { registerPrompts } from "./prompts.js";
 
-const INSTRUCTIONS = `Mexican tax and banking toolkit. Every tool is read-only and needs no API key, no CSD certificate and no PAC contract. Seven of the eight are pure computation over bundled catalogues and never touch the network; only \`cfdi_status\` leaves the process, and it talks to exactly one hardcoded host — the SAT's public status service.
+const INSTRUCTIONS = `Mexican tax and banking toolkit. Every tool is read-only and needs no API key, no CSD certificate and no PAC contract. Seven of the nine are pure computation over bundled catalogues and never touch the network; only \`cfdi_status\` and \`cfdi_batch_status\` leave the process, and they talk to exactly one hardcoded host — the SAT's public status service.
 
 Guidance:
 - Identifier questions: \`validate_rfc\`, \`validate_curp\`, \`validate_clabe\`, \`validate_nss\`. Each returns the normalised value, the parsed fields and a legible reason for every failure.
 - Fixtures, seeds and demos: \`generate_test_data\`. Its output satisfies every check digit and is generated, not taken from real records (a value can still coincide with a real one by chance).
 - An invoice XML in hand: \`parse_cfdi\` reads it (labels every catalogue code, validates both RFCs, checks the arithmetic); \`cfdi_status\` asks the SAT whether it is still live. Prefer passing the whole \`xml\` to \`cfdi_status\` over typing the four fields — the total has to match the printed-representation format, and a total written in another format, or any mistyped value, can come back as a false 'No Encontrado'.
-- Code tables: \`sat_catalog_lookup\` covers régimen fiscal, uso CFDI, forma and método de pago, tipo de comprobante, objeto de impuesto, impuestos, CLABE banks and CURP states.
+- Several invoices: \`cfdi_batch_status\` (up to 25; two requests at a time, duplicates and recent answers not re-asked). Prefer \`cfdi_status\` for one.
+- Code tables: the same nine tables are also resources (\`mx-fiscal://catalogs\`). \`sat_catalog_lookup\` covers régimen fiscal, uso CFDI, forma and método de pago, tipo de comprobante, objeto de impuesto, impuestos, CLABE banks and CURP states.
 
 Four distinctions worth carrying into your answers:
 
@@ -43,7 +46,7 @@ export function createServer(): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     {
-      capabilities: { tools: {} },
+      capabilities: { tools: {}, resources: {}, prompts: {} },
       instructions: INSTRUCTIONS,
       // The tool list is a compile-time constant here — no dynamic
       // registration, no feature flags — so on the 2026-07-28 revision we can
@@ -60,6 +63,8 @@ export function createServer(): McpServer {
   registerIdentifierTools(server); // validate_rfc/curp/clabe/nss + generate_test_data
   registerCfdiTools(server); // parse_cfdi + cfdi_status
   registerCatalogTools(server); // sat_catalog_lookup
+  registerResources(server); // the nine code tables as mx-fiscal://catalog/<name>
+  registerPrompts(server); // review_cfdi, validate_identifiers, seed_test_data
 
   return server;
 }

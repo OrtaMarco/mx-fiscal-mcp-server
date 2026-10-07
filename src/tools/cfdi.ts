@@ -6,8 +6,10 @@ import * as z from "zod/v4";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { fail, field, renderFindings, respond, responseFormatField, table } from "../format.js";
 import { CfdiParseError, parseCfdi } from "../core/cfdi.js";
-import { queryCfdiStatus, validateStatusQuery } from "../core/sat.js";
-import { CfdiSchema, CfdiStatusSchema } from "../schemas.js";
+import { queryCfdiStatus } from "../core/sat.js";
+import { resolveStatusQuery } from "../core/status-query.js";
+import { BATCH_CONCURRENCY, BATCH_MAX_ITEMS, BATCH_OUTAGE_STOP, CACHE_TTL_MS, batchCfdiStatus } from "../core/status-batch.js";
+import { CfdiBatchStatusSchema, CfdiSchema, CfdiStatusSchema } from "../schemas.js";
 import { SAT_CONSULTA_URL } from "../constants.js";
 import { READ_ONLY, READ_ONLY_NETWORK, withHeavySlot } from "./_shared.js";
 
@@ -22,7 +24,7 @@ export function registerCfdiTools(server: McpServer): void {
   server.registerTool(
     "parse_cfdi",
     {
-      title: "Parse CFDI 4.0 XML",
+      title: "Parse CFDI XML",
       description: `Turn the XML of a Mexican electronic invoice (CFDI 4.0) into structured JSON: header, issuer, receiver, every line item with its transferred and withheld taxes, the tax totals, and the Timbre Fiscal Digital (UUID, stamp date, SAT certificate number, PAC's RFC) — or \`timbre: null\` when the document was never stamped.
 
 Three things this does beyond reading attributes:
@@ -32,6 +34,8 @@ Three things this does beyond reading attributes:
   3. **It checks the arithmetic**: subtotal − discount + transferred − withheld should equal the declared total. A mismatch is a warning, not a verdict — rounding at the line level is allowed within a centavo.
 
 It walks the document by local element name, so it does not care whether the PAC used the \`cfdi:\` and \`tfd:\` prefixes, different ones, or none.
+
+**Which documents it takes.** Any XML whose root is \`Comprobante\`: CFDI 4.0 (including tipo P with the Pagos 2.0 complement and tipo N with Nómina), and 3.3 with a version warning. Of the complements it reads only the Timbre Fiscal Digital and local taxes (ImpuestosLocales); any other present is named in \`findings\` but its content is not extracted. A 'Retenciones e información de pagos' document is a different SAT document and is refused with that explanation. Input is capped (default 2,000,000 characters, 200,000 elements), a DOCTYPE is refused, and attribute values are cut at 4,000 characters.
 
 **What this does NOT do:** it does not verify the digital signature, and it does not ask the SAT anything. A document that parses cleanly can still be cancelled, or have been fabricated wholesale. Use \`cfdi_status\` for the SAT's own answer.
 
@@ -149,7 +153,7 @@ What comes back, each with its meaning spelled out:
   - **ValidacionEFOS** — whether the issuer, and any third-party RFC the invoice was issued on behalf of (*a cuenta de terceros*), appears on the SAT's definitive 69-B list of companies that invoice simulated operations. Read with the code table the SAT documents (service documentation v1.4, section 3): 100, 101 and 104 put the issuer on the list; 102 and 103 mean the issuer is NOT on it but a third-party RFC is; 200 and 201 mean the issuer is not on it (201: nor any third party). \`efos_state\` speaks of the issuer only and \`efos_third_party_state\` of the third parties; an empty field or an undocumented code is \`unknown\`, with the raw code kept in \`validacion_efos\`.
   - **CodigoEstatus** — the service's own result code.
 
-**Fail-soft by design.** The SAT publishes no SLA and no status page, and the endpoint does go down; its documentation states capacity for up to 2 million queries per hour and asks callers not to raise their query volume, so query once per invoice and cache the answer. On timeout, refusal or a malformed answer this returns \`available: false\` with the reason instead of raising — a failed lookup is a statement about the SAT, never about the invoice. Never report a document as invalid on the strength of an unreachable service. One retry, 10-second timeout.
+**Fail-soft by design.** The SAT publishes no SLA and no status page, and the endpoint does go down; its documentation states capacity for up to 2 million queries per hour and asks callers not to raise their query volume, so query once per invoice and cache the answer. On timeout, refusal or a malformed answer this returns \`available: false\` with the reason instead of raising — a failed lookup is a statement about the SAT, never about the invoice. Never report a document as invalid on the strength of an unreachable service. 10-second timeout; one retry after a timeout, network error or 5xx, never after a 4xx.
 
 Args (either shape):
   - xml (string), OR rfc_emisor + rfc_receptor + total + uuid (all strings).
@@ -182,54 +186,9 @@ Example: "Is this invoice still valid?" -> cfdi_status(xml="<cfdi:Comprobante �
     },
     async ({ xml, rfc_emisor, rfc_receptor, total, uuid, response_format }) =>
       withHeavySlot(async () => {
-        let source: "fields" | "xml" = "fields";
-        let query: { rfc_emisor: string; rfc_receptor: string; total: string; uuid: string };
-
-        if (xml && xml.trim()) {
-          source = "xml";
-          let doc;
-          try {
-            doc = parseCfdi(xml);
-          } catch (err) {
-            if (err instanceof CfdiParseError) return fail(`Error: ${err.message}`);
-            return fail(`Error reading the CFDI: ${err instanceof Error ? err.message : String(err)}`);
-          }
-          if (!doc.timbre?.uuid) {
-            return fail(
-              "Error: this CFDI carries no Timbre Fiscal Digital, so it has no UUID and the SAT has no record of it. An unstamped XML cannot be looked up.",
-            );
-          }
-          query = {
-            rfc_emisor: doc.emisor.rfc,
-            rfc_receptor: doc.receptor.rfc,
-            total: doc.total,
-            uuid: doc.timbre.uuid,
-          };
-        } else {
-          const missing = [
-            ["rfc_emisor", rfc_emisor],
-            ["rfc_receptor", rfc_receptor],
-            ["total", total],
-            ["uuid", uuid],
-          ]
-            .filter(([, v]) => !v || !String(v).trim())
-            .map(([k]) => k);
-          if (missing.length > 0) {
-            return fail(
-              `Error: missing ${missing.join(", ")}. Pass either the whole invoice as \`xml\`, or all four of rfc_emisor, rfc_receptor, total and uuid.`,
-            );
-          }
-          query = {
-            rfc_emisor: rfc_emisor as string,
-            rfc_receptor: rfc_receptor as string,
-            total: total as string,
-            uuid: uuid as string,
-          };
-          const problems = validateStatusQuery(query);
-          if (problems.length > 0) {
-            return fail(`Error: not sent to the SAT, because the query would come back 'No Encontrado' for the wrong reason:\n- ${problems.join("\n- ")}`);
-          }
-        }
+        const resolved = resolveStatusQuery({ xml, rfc_emisor, rfc_receptor, total, uuid });
+        if (!resolved.ok) return fail(resolved.message);
+        const { query, source } = resolved;
 
         const result = await queryCfdiStatus(query);
         const payload = { ...result, source };
@@ -272,6 +231,73 @@ Example: "Is this invoice still valid?" -> cfdi_status(xml="<cfdi:Comprobante �
             `_Source: ${SAT_CONSULTA_URL} (public, no credentials)._`,
           ].join("\n");
         });
+      }),
+  );
+
+  // --- cfdi_batch_status ---------------------------------------------------
+
+  server.registerTool(
+    "cfdi_batch_status",
+    {
+      title: "CFDI Status at the SAT, several invoices",
+      description: `Ask the SAT about up to ${BATCH_MAX_ITEMS} invoices in one call — same service and same answer per invoice as \`cfdi_status\`, with the SAT's request for restraint built in: **at most ${BATCH_CONCURRENCY} requests in flight**, duplicates asked once, answers remembered in memory for ${CACHE_TTL_MS / 60_000} minutes (an outage is never remembered), and once ${BATCH_OUTAGE_STOP} consecutive requests have failed no new one is started (one already in flight still finishes). Use it to reconcile a handful of invoices; it is not a bulk-verification pipeline, and the SAT states its service is sized for up to 2 million queries per hour and asks callers not to raise their volume.
+
+Each item is either \`{ xml }\` (preferred — the four values are derived from it) or \`{ rfc_emisor, rfc_receptor, total, uuid }\`. An item that cannot be queried (bad XML, unstamped, malformed field) is reported on its own line with the reason and costs no request; it does not fail the batch.
+
+Per item, \`outcome\` is: \`queried\` (asked the SAT now), \`cached\` (answered from memory, up to ${CACHE_TTL_MS / 60_000} minutes old), \`duplicate\` (same invoice as an earlier item), \`rejected\` (never sent; see \`error\`) or \`skipped\` (not attempted after repeated outages). A \`queried\` item whose \`result.available\` is false means the SAT did not answer — a statement about the SAT, never about the invoice. The same applies to \`skipped\`.
+
+Args:
+  - items (array of 1-${BATCH_MAX_ITEMS}): each with \`xml\` OR rfc_emisor + rfc_receptor + total + uuid.
+  - response_format ('markdown' | 'json'): output format (default 'markdown').
+
+Returns: { total, queried, cached, duplicates, rejected, skipped, unavailable, stopped_after_outage, items[{index, outcome, source, error, uuid, result}] }, where \`result\` has the shape \`cfdi_status\` returns (without \`source\`).
+
+Example: "Are these three invoices still live?" -> cfdi_batch_status(items=[{xml:"…"},{xml:"…"},{xml:"…"}]).`,
+      inputSchema: z.object({
+        items: z
+          .array(
+            z.object({
+              xml: z.string().optional().describe("The complete CFDI XML. When given, the four fields are derived from it."),
+              rfc_emisor: z.string().optional().describe("Issuer's RFC. Required unless `xml` is given."),
+              rfc_receptor: z.string().optional().describe("Receiver's RFC. Required unless `xml` is given."),
+              total: z.string().optional().describe("Total exactly as written in the XML, e.g. '1160.00'. Required unless `xml` is given."),
+              uuid: z.string().optional().describe("The UUID of the Timbre Fiscal Digital. Required unless `xml` is given."),
+            }),
+          )
+          .min(1)
+          .max(BATCH_MAX_ITEMS)
+          .describe(`The invoices to check, 1-${BATCH_MAX_ITEMS}.`),
+        response_format: responseFormatField,
+      }),
+      outputSchema: CfdiBatchStatusSchema,
+      annotations: READ_ONLY_NETWORK,
+    },
+    async ({ items, response_format }) =>
+      withHeavySlot(async () => {
+        const batch = await batchCfdiStatus(items);
+        return respond(batch, response_format, () =>
+          [
+            `# CFDI batch status — ${batch.total} item(s)`,
+            "",
+            `Queried ${batch.queried} · cached ${batch.cached} · duplicates ${batch.duplicates} · rejected ${batch.rejected} · skipped ${batch.skipped} · SAT unavailable ${batch.unavailable}`,
+            ...(batch.stopped_after_outage
+              ? ["", "⚠️ The SAT failed twice in a row, so the remaining invoices were not sent. That is a statement about the SAT, not about those invoices."]
+              : []),
+            "",
+            table(
+              ["#", "UUID", "Outcome", "Estado", "Cancelable", "EFOS (issuer)"],
+              batch.items.map((i) => [
+                String(i.index),
+                i.uuid ?? "—",
+                i.outcome,
+                i.result?.status?.estado || (i.result && !i.result.available ? "SAT unavailable" : "—"),
+                i.result?.status?.es_cancelable || "—",
+                i.result?.status ? i.result.status.efos_state : "—",
+              ]),
+            ),
+            ...batch.items.filter((i) => i.error).flatMap((i) => ["", `**#${i.index}:** ${i.error}`]),
+          ].join("\n"),
+        );
       }),
   );
 }
