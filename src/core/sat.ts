@@ -49,7 +49,6 @@ export function formatExpressionTotal(total: string): string {
   return out;
 }
 
-/** Build the `expresionImpresa` the service expects. */
 /**
  * RFCs may contain '&' (e.g. «Ñ&A…»). The printed-representation expression
  * carries it as '&amp;' — nodecfdi does the same — and it has to be encoded
@@ -93,6 +92,7 @@ export function validateStatusQuery(input: {
   return problems;
 }
 
+/** Build the `expresionImpresa` the service expects. */
 export function buildExpression(input: {
   rfc_emisor: string;
   rfc_receptor: string;
