@@ -62,7 +62,7 @@
     "@modelcontextprotocol/server": "^2.3.0",
     "@xmldom/xmldom": "^0.9.8",
     "express": "^5.2.1",
-    "mx-identifiers": "^1.0.1",
+    "mx-identifiers": "^1.1.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
